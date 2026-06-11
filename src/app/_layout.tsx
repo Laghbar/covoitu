@@ -3,8 +3,9 @@ import { useState } from 'react';
 import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
 import { AuthScreen } from '@/components/auth-screen';
+import DriverDashboard from '@/components/driver-dashboard';
+import PassengerDashboard from '@/components/passenger-dashboard';
 import { RoleSelectionScreen } from '@/components/role-selection-screen';
 import { WelcomeScreen } from '@/components/welcome-screen';
 import { AuthProvider, useAuth } from '@/context/auth';
@@ -32,7 +33,7 @@ function AppContent() {
     } else if (showWelcome) {
       content = <WelcomeScreen onContinue={dismissWelcome} />;
     } else {
-      content = <AppTabs />;
+      content = user.role === 'driver' ? <DriverDashboard /> : <PassengerDashboard />;
     }
   }
 

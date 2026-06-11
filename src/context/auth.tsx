@@ -1,9 +1,9 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
-import { api, AuthResponse, Role } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
+import { Role } from '@/lib/api';
 
-export type User = { id: number; email: string; name: string; role: Role };
+export type User = { id: string; email: string; name: string; role: Role };
 
 type AuthContextType = {
   user: User | null;
@@ -17,46 +17,74 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const TOKEN_KEY = 'harizana_token';
-const USER_KEY  = 'harizana_user';
-
-async function persist({ token, user }: AuthResponse) {
-  await AsyncStorage.setItem(TOKEN_KEY, token);
-  await AsyncStorage.setItem(USER_KEY, JSON.stringify(user));
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser]               = useState<User | null>(null);
   const [isLoading, setIsLoading]     = useState(true);
   const [showWelcome, setShowWelcome] = useState(false);
 
+  // Map a Supabase session user to our User type
+  function toUser(supaUser: any): User | null {
+    if (!supaUser) return null;
+    return {
+      id:    supaUser.id,
+      email: supaUser.email ?? '',
+      name:  supaUser.user_metadata?.name  ?? supaUser.email ?? '',
+      role:  (supaUser.user_metadata?.role ?? 'passenger') as Role,
+    };
+  }
+
+  // Restore session on mount and listen for auth state changes
   useEffect(() => {
-    AsyncStorage.getItem(USER_KEY)
-      .then((v) => { if (v) setUser(JSON.parse(v)); })
-      .finally(() => setIsLoading(false));
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(toUser(data.session?.user ?? null));
+      setIsLoading(false);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(toUser(session?.user ?? null));
+    });
+
+    return () => listener.subscription.unsubscribe();
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const res = await api.login(email, password);
-    await persist(res);
-    setUser(res.user);
-    // no welcome on login
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw new Error(error.message);
+    // onAuthStateChange will set the user
   }, []);
 
   const register = useCallback(async (name: string, email: string, password: string, role: Role) => {
-    const res = await api.register(name, email, password, role);
-    await persist(res);
-    setUser(res.user);
-    setShowWelcome(true); // only registration triggers welcome
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { name, role } },
+    });
+    if (error) throw new Error(error.message);
+
+    // No session means email confirmation is still ON in Supabase
+    if (!data.session) {
+      throw new Error('Account created! Please check your email to confirm it, then sign in.');
+    }
+
+    // Upsert profile row (don't rely on trigger alone)
+    if (data.user) {
+      await supabase.from('profiles').upsert({ id: data.user.id, name, role }, { onConflict: 'id' });
+    }
+
+    setShowWelcome(true);
   }, []);
 
   const dismissWelcome = useCallback(() => setShowWelcome(false), []);
 
   const logout = useCallback(async () => {
-    await AsyncStorage.removeItem(TOKEN_KEY);
-    await AsyncStorage.removeItem(USER_KEY);
-    setUser(null);
-    setShowWelcome(false);
+    try {
+      await supabase.auth.signOut();
+    } catch (_) {
+      // ignore sign-out errors
+    } finally {
+      setUser(null);
+      setShowWelcome(false);
+    }
   }, []);
 
   return (
