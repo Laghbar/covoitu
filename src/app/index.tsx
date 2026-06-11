@@ -1,98 +1,139 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { SymbolView } from 'expo-symbols';
+import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { useAuth } from '@/context/auth';
+import { useTheme } from '@/hooks/use-theme';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+const ROLE_COLOR: Record<string, string> = {
+  passenger: '#3c87f7',
+  driver: '#43a047',
+};
 
 export default function HomeScreen() {
+  const { user, logout } = useAuth();
+  const theme = useTheme();
+  const accentColor = ROLE_COLOR[user?.role ?? 'passenger'];
+  const initial = (user?.name?.[0] ?? '?').toUpperCase();
+
   return (
     <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
+      <SafeAreaView style={styles.safe}>
+
+        {/* Header row */}
+        <View style={styles.header}>
+          <View>
+            <ThemedText type="small" themeColor="textSecondary">Good day,</ThemedText>
+            <ThemedText type="subtitle" style={styles.userName}>{user?.name}</ThemedText>
+          </View>
+
+          {/* Avatar + logout */}
+          <Pressable onPress={logout} style={[styles.avatar, { backgroundColor: accentColor }]}>
+            <ThemedText style={styles.avatarLetter}>{initial}</ThemedText>
+          </Pressable>
+        </View>
+
+        {/* Role badge */}
+        <View style={[styles.roleBadge, { backgroundColor: accentColor + '15', borderColor: accentColor + '40' }]}>
+          <SymbolView
+            name={user?.role === 'driver'
+              ? { ios: 'car.fill', android: 'directions_car', web: 'directions_car' }
+              : { ios: 'person.2.fill', android: 'group', web: 'group' }}
+            size={16}
+            tintColor={accentColor}
+          />
+          <ThemedText style={[styles.roleText, { color: accentColor }]}>
+            {user?.role === 'driver' ? 'Driver' : 'Passenger'}
           </ThemedText>
-        </ThemedView>
+        </View>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
+        {/* Placeholder content */}
+        <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
+          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.cardLabel}>
+            YOUR DASHBOARD
+          </ThemedText>
+          <ThemedText style={styles.cardNote}>
+            {user?.role === 'driver'
+              ? 'Start offering rides and earn from empty seats.'
+              : 'Search for rides near you and book in seconds.'}
+          </ThemedText>
+        </View>
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
+        {/* Logout button */}
+        <Pressable
+          onPress={logout}
+          style={({ pressed }) => [styles.logoutBtn, { borderColor: theme.backgroundSelected }, pressed && { opacity: 0.6 }]}>
+          <SymbolView
+            name={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }}
+            size={16}
+            tintColor={theme.textSecondary}
           />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+          <ThemedText type="small" themeColor="textSecondary">Sign out</ThemedText>
+        </Pressable>
 
-        {Platform.OS === 'web' && <WebBadge />}
       </SafeAreaView>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  container: { flex: 1, flexDirection: 'row', justifyContent: 'center' },
+  safe: {
     flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
     maxWidth: MaxContentWidth,
+    paddingHorizontal: Spacing.four,
+    paddingBottom: BottomTabInset + Spacing.three,
+    gap: Spacing.three,
+    paddingTop: Spacing.four,
   },
-  heroSection: {
+
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  userName: { letterSpacing: -0.3 },
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
   },
-  title: {
-    textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
+  avatarLetter: { color: '#fff', fontSize: 20, fontWeight: '700', lineHeight: 26 },
+
+  roleBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    alignSelf: 'flex-start',
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
+    paddingVertical: Spacing.one + 2,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  roleText: { fontSize: 13, fontWeight: '600' },
+
+  card: {
     borderRadius: Spacing.four,
+    padding: Spacing.four,
+    gap: Spacing.two,
+  },
+  cardLabel: { letterSpacing: 0.5, fontSize: 11 },
+  cardNote: { fontSize: 15, lineHeight: 24 },
+
+  logoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderRadius: Spacing.three,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    marginTop: 'auto',
   },
 });
