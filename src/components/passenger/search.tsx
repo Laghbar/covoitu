@@ -6,28 +6,11 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } fr
 import { RideItem } from '../passenger-dashboard';
 import { useAuth } from '@/context/auth';
 import { supabase } from '@/lib/supabase';
+import { MOROCCAN_CITIES, normalizeCity } from '@/lib/cities';
 
 const C = '#3B82F6';
 
-const CITIES = [
-  'Agadir','Aït Melloul','Al Hoceïma','Azilal','Azrou',
-  'Béni Mellal','Benslimane','Berrechid','Bouskoura',
-  'Casablanca','Chefchaouen',
-  'Dakhla',
-  'El Jadida','El Kelâa des Sraghna','Errachidia','Essaouira',
-  'Fès','Fkih Ben Salah',
-  'Guelmim',
-  'Ifrane','Inzegane',
-  'Kénitra','Khemisset','Khouribga','Ksar el-Kébir',
-  'Laâyoune','Larache',
-  'Marrakech','Meknès','Midelt','Mohammedia',
-  'Nador',
-  'Ouarzazate','Ouazzane','Oujda',
-  'Rabat',
-  'Safi','Salé','Settat','Sidi Bennour','Sidi Ifni','Sidi Slimane','Skhirate',
-  'Tanger','Taroudant','Taza','Tétouan','Tiznit',
-  'Zagora',
-];
+const CITIES = MOROCCAN_CITIES;
 
 function toRideItem(r: any): RideItem {
   // Calculate from accepted bookings (source of truth) rather than the cached column
@@ -51,7 +34,13 @@ function toRideItem(r: any): RideItem {
       initial: (r.driver?.name?.[0] ?? 'D').toUpperCase(),
       rating: 4.8, trips: 0, memberSince: '2024', bio: r.note ?? '',
     },
-    car: { make: '', model: '', year: '', color: '', plate: '' },
+    car: {
+      make:  r.car_make  ?? '',
+      model: r.car_model ?? '',
+      year:  r.car_year  ?? '',
+      color: r.car_color ?? '',
+      plate: r.car_plate ?? '',
+    },
     preferences: Array.isArray(r.preferences) ? r.preferences : [],
     pickupPoint: r.pickup_point ?? '',
     dropoffPoint: r.dropoff_point ?? '',
@@ -254,9 +243,10 @@ function RideCard({ ride, alreadyBooked, onPress }: {
 type Props = {
   onNavigate: (key: string, payload?: any) => void;
   initialQuery?: { from: string; to: string; date: string; seats: string } | null;
+  onScanQR?: () => void;
 };
 
-export function PassengerSearch({ onNavigate, initialQuery }: Props) {
+export function PassengerSearch({ onNavigate, initialQuery, onScanQR }: Props) {
   const { user } = useAuth();
   const [from,          setFrom]          = useState(initialQuery?.from  ?? '');
   const [to,            setTo]            = useState(initialQuery?.to    ?? '');
@@ -321,7 +311,7 @@ export function PassengerSearch({ onNavigate, initialQuery }: Props) {
     const [ridesRes, bookingsRes] = await Promise.all([
       supabase
         .from('rides')
-        .select('id, from_city, to_city, departure_date, departure_time, price, seats, booked_seats, preferences, pickup_point, dropoff_point, note, driver:driver_id(name), bookings(seats_requested, status)')
+        .select('id, from_city, to_city, departure_date, departure_time, price, seats, booked_seats, preferences, pickup_point, dropoff_point, note, car_make, car_model, car_year, car_color, car_plate, driver:driver_id(name), bookings(seats_requested, status)')
         .eq('status', 'active')
         .gte('departure_date', today)
         .order('departure_date', { ascending: true }),
@@ -356,14 +346,52 @@ export function PassengerSearch({ onNavigate, initialQuery }: Props) {
   }, [allRides]);
 
   const applySearch = (f = from, t = to, d = date) => {
+    const nf = normalizeCity(f);
+    const nt = normalizeCity(t);
     const filtered = allRides.filter((r) => {
-      const matchFrom = !f || r.from.toLowerCase().includes(f.toLowerCase());
-      const matchTo   = !t || r.to.toLowerCase().includes(t.toLowerCase());
-      const matchDate = !d || r.date === d;
+      const matchFrom = !nf || r.from.toLowerCase().includes(nf.toLowerCase()) || nf.toLowerCase().includes(r.from.toLowerCase());
+      const matchTo   = !nt || r.to.toLowerCase().includes(nt.toLowerCase())   || nt.toLowerCase().includes(r.to.toLowerCase());
+      const matchDate = !d  || r.date === d;
       return matchFrom && matchTo && matchDate;
     });
     setResults(filtered);
   };
+
+  // Fresh fetch + filter — called by the search button so new rides are always visible
+  const searchNow = useCallback(async () => {
+    setLoading(true);
+    setDbError(null);
+    const today = new Date().toISOString().split('T')[0];
+
+    const [ridesRes, bookingsRes] = await Promise.all([
+      supabase
+        .from('rides')
+        .select('id, from_city, to_city, departure_date, departure_time, price, seats, booked_seats, preferences, pickup_point, dropoff_point, note, car_make, car_model, car_year, car_color, car_plate, driver:driver_id(name), bookings(seats_requested, status)')
+        .eq('status', 'active')
+        .gte('departure_date', today)
+        .order('departure_date', { ascending: true }),
+      user
+        ? supabase.from('bookings').select('ride_id').eq('passenger_id', user.id).in('status', ['pending', 'accepted'])
+        : Promise.resolve({ data: [] as any[] }),
+    ]);
+
+    if (ridesRes.error) { setDbError(ridesRes.error.message); setLoading(false); return; }
+
+    const mapped = (ridesRes.data ?? []).map(toRideItem);
+    setAllRides(mapped);
+    setBookedRideIds(new Set((bookingsRes.data ?? []).map((b: any) => b.ride_id)));
+
+    const nFrom = normalizeCity(from);
+    const nTo   = normalizeCity(to);
+    const filtered = mapped.filter((r) => {
+      const matchFrom = !nFrom || r.from.toLowerCase().includes(nFrom.toLowerCase()) || nFrom.toLowerCase().includes(r.from.toLowerCase());
+      const matchTo   = !nTo   || r.to.toLowerCase().includes(nTo.toLowerCase())     || nTo.toLowerCase().includes(r.to.toLowerCase());
+      const matchDate = !date  || r.date === date;
+      return matchFrom && matchTo && matchDate;
+    });
+    setResults(filtered);
+    setLoading(false);
+  }, [user, from, to, date]);
 
   const sorted = [...results].sort((a, b) => {
     if (sort === 'Cheapest')   return a.price - b.price;
@@ -417,7 +445,7 @@ export function PassengerSearch({ onNavigate, initialQuery }: Props) {
               placeholder="Seats" placeholderTextColor="#94A3B8" keyboardType="numeric"
             />
           </View>
-          <Pressable style={[styles.searchBtn, { backgroundColor: C }]} onPress={() => applySearch()}>
+          <Pressable style={[styles.searchBtn, { backgroundColor: C }]} onPress={searchNow}>
             <Text style={{ color: '#fff', fontSize: 17 }}>🔍</Text>
           </Pressable>
         </View>
@@ -439,9 +467,16 @@ export function PassengerSearch({ onNavigate, initialQuery }: Props) {
             ? ` (${allRides.length} total loaded)`
             : ''}
         </Text>
-        <Pressable onPress={loadRides} style={styles.refreshBtn}>
-          <Text style={styles.refreshTxt}>🔄</Text>
-        </Pressable>
+        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+          {onScanQR && (
+            <Pressable onPress={onScanQR} style={[styles.refreshBtn, { backgroundColor: C + '15' }]}>
+              <Text style={{ fontSize: 16 }}>📷</Text>
+            </Pressable>
+          )}
+          <Pressable onPress={loadRides} style={styles.refreshBtn}>
+            <Text style={styles.refreshTxt}>🔄</Text>
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 4 }}>

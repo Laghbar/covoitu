@@ -146,8 +146,18 @@ export function DriverRides({ onNavigate }: Props) {
   };
 
   const cancelRide = async (id: string) => {
-    const { error } = await supabase.from('rides').update({ status: 'cancelled' }).eq('id', id);
-    if (error) return;
+    const { error: rideErr } = await supabase
+      .from('rides').update({ status: 'cancelled' }).eq('id', id);
+    if (rideErr) { setFetchErr('Could not cancel ride: ' + rideErr.message); return; }
+
+    // Also cancel bookings from client side (DB trigger does this too, belt-and-suspenders)
+    const { error: bookErr } = await supabase
+      .from('bookings')
+      .update({ status: 'cancelled' })
+      .eq('ride_id', id)
+      .in('status', ['pending', 'accepted']);
+    if (bookErr) setFetchErr('Ride cancelled but bookings error: ' + bookErr.message);
+
     setRides(prev => prev.map(r => r.id === id ? { ...r, status: 'cancelled' as Status } : r));
   };
 
@@ -175,6 +185,12 @@ export function DriverRides({ onNavigate }: Props) {
           </Pressable>
         ))}
       </View>
+
+      {fetchErr && (
+        <View style={[styles.empty, { backgroundColor: '#FEF2F2', borderRadius: 12, margin: 4 }]}>
+          <Text style={{ color: '#EF4444', fontSize: 13, textAlign: 'center' }}>⚠️ {fetchErr}</Text>
+        </View>
+      )}
 
       {loading ? (
         <View style={styles.empty}>

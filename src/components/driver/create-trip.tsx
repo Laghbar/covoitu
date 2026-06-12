@@ -1,15 +1,14 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Location from 'expo-location';
 import { SymbolView } from 'expo-symbols';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '@/context/auth';
 import { supabase } from '@/lib/supabase';
+import { MOROCCAN_CITIES, normalizeCity } from '@/lib/cities';
 
 const C = '#10B981';
-
-const CITIES = ['Casablanca', 'Rabat', 'Marrakech', 'Agadir', 'Fès', 'Tanger', 'Meknès', 'Oujda', 'Tétouan', 'Laâyoune'];
 
 const PREFS = [
   { key: 'luggage',  label: 'Luggage',    icon: { ios: 'bag.fill',       android: 'luggage' } },
@@ -24,24 +23,69 @@ function CityPicker({ label, value, onSelect, icon }: {
   label: string; value: string; onSelect: (c: string) => void;
   icon: { ios: string; android: string };
 }) {
-  const [open, setOpen] = useState(false);
+  const [text,    setText]    = useState(value);
+  const [focused, setFocused] = useState(false);
+  const selecting = useRef(false);
+
+  // Keep display in sync when parent sets value externally (e.g. GPS detect)
+  const prevValue = useRef(value);
+  if (value !== prevValue.current) {
+    prevValue.current = value;
+    if (value !== text) setText(value);
+  }
+
+  const suggestions = text.length >= 1
+    ? MOROCCAN_CITIES.filter(c => c.toLowerCase().includes(text.toLowerCase())).slice(0, 8)
+    : MOROCCAN_CITIES.slice(0, 8);
+  const showDropdown = focused && suggestions.length > 0;
+
+  const commit = (city: string) => {
+    setText(city);
+    onSelect(normalizeCity(city));
+    setFocused(false);
+  };
+
   return (
-    <View>
-      <Pressable style={styles.cityBtn} onPress={() => setOpen(!open)}>
-        <SymbolView name={icon as any} size={16} tintColor={value ? C : '#94A3B8'} />
-        <Text style={[styles.cityBtnText, value && { color: '#1E293B', fontWeight: '600' }]}>
-          {value || label}
-        </Text>
-        <SymbolView name={{ ios: open ? 'chevron.up' : 'chevron.down', android: open ? 'expand_less' : 'expand_more' } as any} size={14} tintColor="#94A3B8" />
-      </Pressable>
-      {open && (
-        <View style={styles.cityDropdown}>
-          {CITIES.map((c) => (
-            <Pressable key={c} style={[styles.cityOption, value === c && { backgroundColor: C + '10' }]} onPress={() => { onSelect(c); setOpen(false); }}>
-              <Text style={[styles.cityOptionText, value === c && { color: C, fontWeight: '700' }]}>{c}</Text>
-              {value === c && <SymbolView name={{ ios: 'checkmark', android: 'check' } as any} size={14} tintColor={C} />}
-            </Pressable>
-          ))}
+    <View style={{ zIndex: showDropdown ? 200 : 1 }}>
+      <View style={styles.cityBtn}>
+        <SymbolView name={icon as any} size={16} tintColor={text ? C : '#94A3B8'} />
+        <TextInput
+          style={[styles.cityBtnText, { flex: 1, padding: 0, color: text ? '#1E293B' : '#94A3B8' }]}
+          value={text}
+          onChangeText={(t) => { setText(t); onSelect(t); }}
+          placeholder={label}
+          placeholderTextColor="#94A3B8"
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            if (selecting.current) { selecting.current = false; return; }
+            setTimeout(() => setFocused(false), 150);
+          }}
+        />
+        {text.length > 0 && (
+          <Pressable onPress={() => { setText(''); onSelect(''); }}>
+            <Text style={{ color: '#CBD5E1', fontSize: 16, paddingHorizontal: 4 }}>✕</Text>
+          </Pressable>
+        )}
+      </View>
+
+      {showDropdown && (
+        <View
+          style={styles.cityDropdown}
+          {...(Platform.OS === 'web' ? { onMouseDown: (e: any) => e.preventDefault() } : {})}
+        >
+          <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+            {suggestions.map((c) => (
+              <Pressable
+                key={c}
+                style={[styles.cityOption, value === c && { backgroundColor: C + '10' }]}
+                onPressIn={() => { selecting.current = true; }}
+                onPress={() => commit(c)}
+              >
+                <Text style={[styles.cityOptionText, value === c && { color: C, fontWeight: '700' }]}>{c}</Text>
+                {value === c && <SymbolView name={{ ios: 'checkmark', android: 'check' } as any} size={14} tintColor={C} />}
+              </Pressable>
+            ))}
+          </ScrollView>
         </View>
       )}
     </View>
@@ -122,11 +166,7 @@ export function DriverCreateTrip({ onNavigate }: Props) {
   const [locLoading, setLocLoading] = useState(false);
 
   const applyCity = (raw: string) => {
-    const exact   = CITIES.find(c => c.toLowerCase() === raw.toLowerCase());
-    const partial = CITIES.find(c =>
-      c.toLowerCase().includes(raw.toLowerCase()) || raw.toLowerCase().includes(c.toLowerCase())
-    );
-    setFrom(exact ?? partial ?? raw);
+    setFrom(normalizeCity(raw));
   };
 
   const detectDeparture = () => {
@@ -214,8 +254,8 @@ export function DriverCreateTrip({ onNavigate }: Props) {
     setLoading(true);
     const { error } = await supabase.from('rides').insert({
       driver_id:       user.id,
-      from_city:       from,
-      to_city:         to,
+      from_city:       normalizeCity(from),
+      to_city:         normalizeCity(to),
       departure_date:  dateISO,
       departure_time:  timeISO,
       seats:           Number(seats),

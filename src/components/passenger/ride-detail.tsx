@@ -1,6 +1,7 @@
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
 import { supabase } from '@/lib/supabase';
@@ -33,6 +34,7 @@ type Props = { ride: RideItem; onBack: () => void; onNavigate: (key: string, pay
 
 export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
   const { user }    = useAuth();
+  const insets      = useSafeAreaInsets();
   const [seats,     setSeats]   = useState(1);
   const [message,   setMessage] = useState('');
   const [loading,   setLoading] = useState(false);
@@ -53,16 +55,7 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
       .then(({ data }) => { if (data) setBooked(true); });
   }, [ride.id, user]);
 
-  const book = async () => {
-    if (!user) { setBookError('You must be logged in to book.'); return; }
-    if (available === 0) { setBookError('This ride is full.'); return; }
-
-    const confirmed = Platform.OS === 'web'
-      ? window.confirm(`Book ${seats} seat${seats > 1 ? 's' : ''} on ${ride.from} → ${ride.to} for ${seats * ride.price} MAD?`)
-      : true; // native uses inline confirm below
-
-    if (!confirmed) return;
-
+  const doBook = async () => {
     setLoading(true);
     setBookError(null);
     const { error } = await supabase.from('bookings').insert({
@@ -74,9 +67,30 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
       message:         message.trim() || null,
     });
     setLoading(false);
-
     if (error) { setBookError(error.message); return; }
     setBooked(true);
+  };
+
+  const book = () => {
+    if (!user)          { setBookError('You must be logged in to book.'); return; }
+    if (available === 0){ setBookError('This ride is full.'); return; }
+
+    const summary = seats > 1
+      ? `${seats} seats × ${ride.price} MAD = ${seats * ride.price} MAD`
+      : `${seats} seat · ${seats * ride.price} MAD`;
+
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Book on ${ride.from} → ${ride.to}?\n${summary}`)) doBook();
+    } else {
+      Alert.alert(
+        'Confirm Booking',
+        `${ride.from} → ${ride.to}\n${summary}`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Book Now', onPress: doBook },
+        ],
+      );
+    }
   };
 
   return (
@@ -139,8 +153,18 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
               <SymbolView name={{ ios: 'car.fill', android: 'directions_car' } as any} size={24} tintColor={C} />
             </View>
             <View style={{ flex: 1, gap: 2 }}>
-              <Text style={styles.vehicleName}>{ride.car.make} {ride.car.model} ({ride.car.year})</Text>
-              <Text style={styles.vehiclePlate}>{ride.car.plate} · {ride.car.color}</Text>
+              {(ride.car.make || ride.car.model || ride.car.year) ? (
+                <Text style={styles.vehicleName}>
+                  {[ride.car.make, ride.car.model, ride.car.year ? `(${ride.car.year})` : ''].filter(Boolean).join(' ')}
+                </Text>
+              ) : (
+                <Text style={[styles.vehicleName, { color: '#94A3B8' }]}>Not specified</Text>
+              )}
+              {(ride.car.plate || ride.car.color) ? (
+                <Text style={styles.vehiclePlate}>
+                  {[ride.car.plate, ride.car.color].filter(Boolean).join(' · ')}
+                </Text>
+              ) : null}
             </View>
           </View>
         </View>
@@ -149,15 +173,15 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Trip Details</Text>
           {[
-            { icon: { ios: 'arrow.up.circle.fill', android: 'trip_origin' }, color: C, label: 'Pickup point', value: ride.pickupPoint },
-            { icon: { ios: 'arrow.down.circle.fill', android: 'place' }, color: '#EF4444', label: 'Drop-off point', value: ride.dropoffPoint },
-            { icon: { ios: 'person.2.fill', android: 'group' }, color: '#64748B', label: 'Available seats', value: `${available} of ${ride.seats}` },
+            { icon: { ios: 'arrow.up.circle.fill', android: 'trip_origin' }, color: C, label: 'PICKUP POINT', value: ride.pickupPoint || 'Not specified' },
+            { icon: { ios: 'arrow.down.circle.fill', android: 'place' }, color: '#EF4444', label: 'DROP-OFF POINT', value: ride.dropoffPoint || 'Not specified' },
+            { icon: { ios: 'person.2.fill', android: 'group' }, color: '#64748B', label: 'AVAILABLE SEATS', value: `${available} of ${ride.seats}` },
           ].map((d, i) => (
             <View key={i} style={styles.detailRow}>
               <SymbolView name={d.icon as any} size={16} tintColor={d.color} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.detailLabel}>{d.label}</Text>
-                <Text style={styles.detailValue}>{d.value}</Text>
+                <Text style={[styles.detailValue, !['Not specified'].includes(d.value) ? {} : { color: '#94A3B8' }]}>{d.value}</Text>
               </View>
             </View>
           ))}
@@ -224,25 +248,50 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
           </View>
         )}
 
-        <View style={{ height: 100 }} />
+        <View style={{ height: 130 + insets.bottom }} />
       </ScrollView>
 
       {/* Sticky booking footer */}
-      <View style={styles.bookingFooter}>
-        <View style={styles.seatsControl}>
-          <Text style={styles.seatsLabel}>Seats</Text>
-          <View style={styles.stepper}>
-            <Pressable style={[styles.stepperBtn, { borderColor: C }]} onPress={() => setSeats((s) => Math.max(1, s - 1))}>
-              <Text style={[styles.stepperBtnText, { color: C }]}>−</Text>
-            </Pressable>
-            <Text style={styles.stepperVal}>{seats}</Text>
-            <Pressable style={[styles.stepperBtn, { borderColor: C }]} onPress={() => setSeats((s) => Math.min(available, s + 1))}>
-              <Text style={[styles.stepperBtnText, { color: C }]}>+</Text>
-            </Pressable>
-          </View>
+      <View style={[styles.bookingFooter, { paddingBottom: Math.max(20, insets.bottom + 10) }]}>
+        {/* Cash-only notice */}
+        <View style={styles.cashRow}>
+          <Text style={styles.cashText}>💵 Cash payment — pay the driver on the day</Text>
         </View>
+
+        {/* Seats + Price + Book row */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          {/* Seats stepper */}
+          {!booked && (
+            <View style={styles.seatsControl}>
+              <Text style={styles.seatsLabel}>
+                {available > 1 ? `Seats (max ${available})` : 'Seat'}
+              </Text>
+              <View style={styles.stepper}>
+                <Pressable
+                  style={[styles.stepperBtn, { borderColor: seats > 1 ? C : '#E2E8F0' }]}
+                  onPress={() => setSeats((s) => Math.max(1, s - 1))}
+                  disabled={seats <= 1}>
+                  <Text style={[styles.stepperBtnText, { color: seats > 1 ? C : '#CBD5E1' }]}>−</Text>
+                </Pressable>
+                <Text style={styles.stepperVal}>{seats}</Text>
+                <Pressable
+                  style={[styles.stepperBtn, { borderColor: seats < available ? C : '#E2E8F0' }]}
+                  onPress={() => setSeats((s) => Math.min(available, s + 1))}
+                  disabled={seats >= available}>
+                  <Text style={[styles.stepperBtnText, { color: seats < available ? C : '#CBD5E1' }]}>+</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
+        {/* Price + action */}
         <View style={styles.bookRight}>
-          <Text style={styles.totalPrice}>{seats * ride.price} MAD</Text>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={styles.totalPrice}>{seats * ride.price} MAD</Text>
+            {seats > 1 && (
+              <Text style={styles.priceBreakdown}>{seats} × {ride.price} MAD</Text>
+            )}
+          </View>
           {booked ? (
             <Pressable style={[styles.bookBtn, { backgroundColor: C }]} onPress={() => onNavigate('bookings')}>
               <Text style={styles.bookBtnText}>✓ View Booking</Text>
@@ -258,6 +307,7 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
             </Pressable>
           )}
         </View>
+        </View>  {/* end seats+price row */}
       </View>
       {bookError && (
         <View style={styles.bookError}>
@@ -327,10 +377,17 @@ const styles = StyleSheet.create({
   bookingFooter: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0',
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingVertical: 14, paddingBottom: 20,
+    flexDirection: 'column',
+    paddingHorizontal: 20, paddingTop: 10, paddingBottom: 20,
     shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 8,
+    gap: 10,
   },
+  cashRow: {
+    backgroundColor: '#FFFBEB', borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 6,
+    alignItems: 'center',
+  },
+  cashText: { fontSize: 12, color: '#92400E', fontWeight: '500' },
   seatsControl: { gap: 4 },
   seatsLabel: { fontSize: 11, color: '#94A3B8', fontWeight: '600', textTransform: 'uppercase' },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: 12 },
@@ -339,6 +396,7 @@ const styles = StyleSheet.create({
   stepperVal: { fontSize: 18, fontWeight: '800', color: '#1E293B', minWidth: 20, textAlign: 'center' },
   bookRight: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   totalPrice: { fontSize: 22, fontWeight: '800', color: '#1E293B' },
+  priceBreakdown: { fontSize: 11, color: '#94A3B8', marginTop: -2 },
   bookBtn: { paddingHorizontal: 28, paddingVertical: 14, borderRadius: 14 },
   bookBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
   bookError: { backgroundColor: '#FEF2F2', paddingHorizontal: 16, paddingVertical: 10 },

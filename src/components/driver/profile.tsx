@@ -45,10 +45,11 @@ export function DriverProfile() {
   const [docsUploaded, setDocsUploaded] = useState(0);
   const [docsVerified, setDocsVerified] = useState(false);
   const [profileStats, setProfileStats] = useState({ trips: 0, avgRating: 0, reviewCount: 0 });
-  const [name,  setName]  = useState(user?.name ?? '');
-  const [phone, setPhone] = useState('');
-  const [bio,   setBio]   = useState('');
-  const [photo, setPhoto] = useState<string | null>(null);
+  const [name,       setName]       = useState(user?.name ?? '');
+  const [phone,      setPhone]      = useState('');
+  const [bio,        setBio]        = useState('');
+  const [photo,      setPhoto]      = useState<string | null>(null);
+  const [memberSince, setMemberSince] = useState('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const initial = ((name || user?.name || 'D')[0]).toUpperCase();
@@ -56,12 +57,15 @@ export function DriverProfile() {
   useEffect(() => {
     if (!user) return;
     supabase.from('profiles')
-      .select('name, phone, bio, doc_national_id_url, doc_license_url, doc_registration_url, documents_verified')
+      .select('name, phone, bio, created_at, doc_national_id_url, doc_license_url, doc_registration_url, documents_verified')
       .eq('id', user.id).single()
       .then(({ data }) => {
         if (data?.name)  setName(data.name);
         if (data?.phone) setPhone(data.phone);
         if (data?.bio)   setBio(data.bio);
+        if (data?.created_at) {
+          setMemberSince(new Date(data.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }));
+        }
         const uploaded = [data?.doc_national_id_url, data?.doc_license_url, data?.doc_registration_url]
           .filter(Boolean).length;
         setDocsUploaded(uploaded);
@@ -179,12 +183,6 @@ export function DriverProfile() {
           onPress: () => setShowDocs(true),
         },
         {
-          label: 'Payment Methods', subtitle: 'Cash · Bank transfer',
-          icon: { ios: 'creditcard.fill', android: 'credit_card' },
-          iconBg: '#3B82F615', iconColor: '#3B82F6',
-          onPress: () => Alert.alert('Payments', 'Payment settings coming soon.'),
-        },
-        {
           label: 'Notifications',
           icon: { ios: 'bell.fill', android: 'notifications' },
           iconBg: '#F59E0B15', iconColor: '#F59E0B',
@@ -255,9 +253,17 @@ export function DriverProfile() {
         </Pressable>
         <Text style={styles.avatarName}>{name || user?.name || 'Driver'}</Text>
         <Text style={styles.avatarEmail}>{user?.email}</Text>
-        <Pressable onPress={changePhoto}>
-          <Text style={[styles.changePhotoText, { color: C }]}>Change profile photo</Text>
-        </Pressable>
+        {memberSince ? <Text style={styles.memberSince}>Member since {memberSince}</Text> : null}
+
+        <View style={[styles.verifiedBadge, { backgroundColor: docsVerified ? '#F0FDF4' : '#FFFBEB' }]}>
+          <SymbolView
+            name={{ ios: docsVerified ? 'checkmark.seal.fill' : 'clock.fill', android: docsVerified ? 'verified' : 'schedule' } as any}
+            size={13} tintColor={docsVerified ? '#16A34A' : '#D97706'}
+          />
+          <Text style={[styles.verifiedText, { color: docsVerified ? '#16A34A' : '#D97706' }]}>
+            {docsVerified ? 'Verified Driver' : docsUploaded === 3 ? 'Pending Review' : `${docsUploaded}/3 Documents`}
+          </Text>
+        </View>
 
         {/* Rating + stats row */}
         <View style={styles.statsRow}>
@@ -286,19 +292,25 @@ export function DriverProfile() {
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Personal Info</Text>
-          <Pressable
-            style={[styles.editBtn, { backgroundColor: editing ? C : '#F1F5F9', opacity: saving ? 0.6 : 1 }]}
-            onPress={() => editing ? saveProfile() : setEditing(true)}
-            disabled={saving}>
-            <SymbolView
-              name={{ ios: editing ? 'checkmark' : 'pencil', android: editing ? 'check' : 'edit' } as any}
-              size={13}
-              tintColor={editing ? '#fff' : '#475569'}
-            />
-            <Text style={[styles.editBtnText, { color: editing ? '#fff' : '#475569' }]}>
-              {saving ? 'Saving…' : editing ? 'Save' : 'Edit'}
-            </Text>
-          </Pressable>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {editing && (
+              <Pressable style={styles.cancelBtn} onPress={() => setEditing(false)}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </Pressable>
+            )}
+            <Pressable
+              style={[styles.editBtn, { backgroundColor: editing ? C : '#F1F5F9', opacity: saving ? 0.6 : 1 }]}
+              onPress={() => editing ? saveProfile() : setEditing(true)}
+              disabled={saving}>
+              <SymbolView
+                name={{ ios: editing ? 'checkmark' : 'pencil', android: editing ? 'check' : 'edit' } as any}
+                size={13} tintColor={editing ? '#fff' : '#475569'}
+              />
+              <Text style={[styles.editBtnText, { color: editing ? '#fff' : '#475569' }]}>
+                {saving ? 'Saving…' : editing ? 'Save' : 'Edit'}
+              </Text>
+            </Pressable>
+          </View>
         </View>
 
         <View>
@@ -349,7 +361,9 @@ export function DriverProfile() {
             />
           ) : (
             <View style={styles.bioBox}>
-              <Text style={styles.bioText}>{bio}</Text>
+              <Text style={[styles.bioText, !bio && { color: '#CBD5E1', fontStyle: 'italic' }]}>
+                {bio || 'No bio yet. Tap Edit to add one.'}
+              </Text>
             </View>
           )}
         </View>
@@ -388,9 +402,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#1E293B', alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: '#F0FDF4',
   },
-  avatarName: { fontSize: 20, fontWeight: '800', color: '#1E293B' },
-  avatarEmail: { fontSize: 13, color: '#94A3B8' },
-  changePhotoText: { fontSize: 13, fontWeight: '600', marginTop: 2 },
+  avatarName:  { fontSize: 20, fontWeight: '800', color: '#1E293B' },
+  avatarEmail: { fontSize: 13, color: '#64748B' },
+  memberSince: { fontSize: 12, color: '#94A3B8' },
+  verifiedBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, marginTop: 4 },
+  verifiedText:  { fontSize: 12, fontWeight: '700' },
+  cancelBtn:     { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, backgroundColor: '#F1F5F9' },
+  cancelBtnText: { fontSize: 13, fontWeight: '600', color: '#64748B' },
 
   statsRow: {
     flexDirection: 'row', alignItems: 'center',

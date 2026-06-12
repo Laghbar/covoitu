@@ -1,379 +1,178 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useCallback, useRef, useState } from 'react';
-import {
-  ActivityIndicator, Modal, Platform, Pressable,
-  ScrollView, StyleSheet, Text, TextInput, View,
-} from 'react-native';
-
-import { supabase } from '@/lib/supabase';
+import { useEffect, useRef, useState } from 'react';
+import { Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 const C = '#3B82F6';
 
-type Ride = {
-  id: string;
-  from_city: string;
-  to_city: string;
-  departure_date: string;
-  departure_time: string;
-  price: number;
-  seats: number;
-  booked_seats: number;
-  driver: { name: string } | null;
-};
-
-type Props = {
+export type Props = {
   visible: boolean;
   onClose: () => void;
-  onSelectRide: (ride: any) => void;
+  onDriverFound: (driverId: string) => void;
 };
 
-function RideCard({ ride, onPress }: { ride: Ride; onPress: () => void }) {
-  const available = ride.seats - ride.booked_seats;
+function parseCode(raw: string): string | null {
+  const t = raw.trim();
+  if (t.startsWith('harizana-driver:')) return t.split('harizana-driver:')[1] || null;
+  if (/^[0-9a-f-]{36}$/i.test(t)) return t;
+  return null;
+}
+
+// ── Web: paste code manually ──────────────────────────────────────────────────
+function WebScanner({ onDriverFound, onClose }: { onDriverFound: (id: string) => void; onClose: () => void }) {
+  const [code, setCode] = useState('');
+  const [err,  setErr]  = useState('');
+
+  const submit = () => {
+    const id = parseCode(code);
+    if (!id) { setErr('Invalid code. Paste the full driver code or UUID.'); return; }
+    onDriverFound(id);
+  };
+
   return (
-    <Pressable style={styles.rideCard} onPress={onPress}>
-      <View style={styles.rideRoute}>
-        <Text style={styles.rideCity}>{ride.from_city}</Text>
-        <Text style={styles.rideArrow}>→</Text>
-        <Text style={styles.rideCity}>{ride.to_city}</Text>
-      </View>
-      <Text style={styles.rideMeta}>
-        📅 {ride.departure_date}  🕐 {ride.departure_time}
-      </Text>
-      <View style={styles.rideFooter}>
-        <Text style={styles.ridePrice}>{ride.price} MAD</Text>
-        <Text style={styles.rideSeats}>{available} seat{available !== 1 ? 's' : ''} left</Text>
-      </View>
-    </Pressable>
+    <View style={web.box}>
+      <Text style={web.title}>Enter Driver Code</Text>
+      <Text style={web.sub}>Paste the code the driver shared with you</Text>
+      <TextInput
+        style={web.input}
+        value={code}
+        onChangeText={(t) => { setCode(t); setErr(''); }}
+        placeholder="harizana-driver:xxxxxxxx-xxxx-…"
+        placeholderTextColor="#94A3B8"
+        autoFocus
+      />
+      {err ? <Text style={web.err}>{err}</Text> : null}
+      <Pressable style={web.btn} onPress={submit}>
+        <Text style={web.btnTxt}>Find Driver</Text>
+      </Pressable>
+      <Pressable style={web.cancel} onPress={onClose}>
+        <Text style={web.cancelTxt}>Cancel</Text>
+      </Pressable>
+    </View>
   );
 }
 
-export function QRScannerModal({ visible, onClose, onSelectRide }: Props) {
+const web = StyleSheet.create({
+  box:       { backgroundColor: '#fff', borderRadius: 20, padding: 28, gap: 14, width: '100%', maxWidth: 380, alignItems: 'center' },
+  title:     { fontSize: 20, fontWeight: '800', color: '#1E293B' },
+  sub:       { fontSize: 13, color: '#64748B', textAlign: 'center' },
+  input:     { width: '100%', backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 16, paddingVertical: 13, fontSize: 14, color: '#1E293B' },
+  err:       { fontSize: 12, color: '#EF4444', textAlign: 'center' },
+  btn:       { width: '100%', backgroundColor: C, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  btnTxt:    { color: '#fff', fontSize: 15, fontWeight: '700' },
+  cancel:    { width: '100%', backgroundColor: '#F1F5F9', borderRadius: 14, paddingVertical: 12, alignItems: 'center' },
+  cancelTxt: { color: '#64748B', fontSize: 14, fontWeight: '600' },
+});
+
+// ── Native: live camera scanner ───────────────────────────────────────────────
+function NativeScanner({ onDriverFound, onClose }: { onDriverFound: (id: string) => void; onClose: () => void }) {
   const [permission, requestPermission] = useCameraPermissions();
-  const [scanned,    setScanned]        = useState(false);
-  const [manualCode, setManualCode]     = useState('');
-  const [loading,    setLoading]        = useState(false);
-  const [error,      setError]          = useState('');
-  const [driverName, setDriverName]     = useState('');
-  const [rides,      setRides]          = useState<Ride[]>([]);
-  const processingRef = useRef(false);
+  const scanned = useRef(false);
 
-  const reset = () => {
-    setScanned(false);
-    setManualCode('');
-    setError('');
-    setDriverName('');
-    setRides([]);
-    processingRef.current = false;
-  };
+  useEffect(() => { scanned.current = false; }, []);
 
-  const lookupDriver = useCallback(async (rawCode: string) => {
-    if (processingRef.current) return;
-    processingRef.current = true;
+  if (!permission) return null;
 
-    // Extract UUID from harizana-driver:UUID or raw UUID
-    const match = rawCode.match(/harizana-driver:([0-9a-f-]{36})/i) ?? rawCode.match(/([0-9a-f-]{36})/i);
-    if (!match) {
-      setError('Invalid QR code. Not a Harizana driver code.');
-      processingRef.current = false;
-      return;
-    }
-
-    const driverId = match[1];
-    setLoading(true);
-    setError('');
-    setScanned(true);
-
-    const today = new Date().toISOString().split('T')[0];
-    const { data, error: dbError } = await supabase
-      .from('rides')
-      .select('id, from_city, to_city, departure_date, departure_time, price, seats, booked_seats, driver:driver_id(name)')
-      .eq('driver_id', driverId)
-      .eq('status', 'active')
-      .gte('departure_date', today)
-      .order('departure_date', { ascending: true });
-
-    if (dbError) { setError(dbError.message); setLoading(false); processingRef.current = false; return; }
-
-    const list = (data ?? []) as unknown as Ride[];
-    if (list.length > 0) setDriverName((list[0].driver as any)?.name ?? 'Driver');
-    else {
-      // try to get driver name from profiles
-      const { data: profile } = await supabase
-        .from('profiles').select('name').eq('id', driverId).single();
-      setDriverName((profile as any)?.name ?? 'Driver');
-    }
-
-    setRides(list);
-    setLoading(false);
-  }, []);
-
-  const handleBarcodeScanned = ({ data }: { data: string }) => {
-    if (!scanned) lookupDriver(data);
-  };
-
-  const handleManualSubmit = () => {
-    const code = manualCode.trim();
-    if (!code) return;
-    // Expand short code (8-char hex prefix) → not possible, accept full UUID or full harizana-driver string
-    lookupDriver(code);
-  };
-
-  const toRideItem = (r: Ride) => ({
-    id: r.id,
-    from: r.from_city,
-    to: r.to_city,
-    date: r.departure_date,
-    time: r.departure_time,
-    price: r.price,
-    seats: r.seats,
-    bookedSeats: r.booked_seats,
-    driver: {
-      name: (r.driver as any)?.name ?? 'Driver',
-      initial: ((r.driver as any)?.name?.[0] ?? 'D').toUpperCase(),
-      rating: 4.8, trips: 0, memberSince: '2024', bio: '',
-    },
-    car: { make: '', model: '', year: '', color: '', plate: '' },
-    preferences: [], pickupPoint: '', dropoffPoint: '',
-  });
-
-  const isWeb = Platform.OS === 'web';
+  if (!permission.granted) {
+    return (
+      <View style={nat.permBox}>
+        <Text style={nat.permTitle}>Camera Permission Needed</Text>
+        <Text style={nat.permSub}>Allow camera access to scan the driver's QR code.</Text>
+        <Pressable style={nat.permBtn} onPress={requestPermission}>
+          <Text style={nat.permBtnTxt}>Allow Camera</Text>
+        </Pressable>
+        <Pressable style={nat.cancelWrap} onPress={onClose}>
+          <Text style={nat.cancelTxt}>Cancel</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={() => { reset(); onClose(); }}>
-      <View style={styles.overlay}>
-
-        {/* Header */}
-        <View style={styles.header}>
-          <Pressable onPress={() => { reset(); onClose(); }} style={styles.backBtn}>
-            <Text style={styles.backTxt}>✕</Text>
-          </Pressable>
-          <Text style={styles.title}>
-            {scanned ? 'Driver Rides' : 'Scan Driver QR'}
-          </Text>
-          {scanned && (
-            <Pressable onPress={reset} style={styles.rescanBtn}>
-              <Text style={styles.rescanTxt}>↩ Rescan</Text>
-            </Pressable>
-          )}
+    <View style={{ flex: 1 }}>
+      <CameraView
+        style={StyleSheet.absoluteFill}
+        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+        onBarcodeScanned={(e) => {
+          if (scanned.current) return;
+          const id = parseCode(e.data);
+          if (!id) return;
+          scanned.current = true;
+          onDriverFound(id);
+        }}
+      />
+      {/* Overlay with corner brackets */}
+      <View style={nat.overlay}>
+        <View style={nat.topDim} />
+        <View style={nat.middle}>
+          <View style={nat.sideDim} />
+          <View style={nat.frame}>
+            <View style={[nat.corner, nat.tl]} />
+            <View style={[nat.corner, nat.tr]} />
+            <View style={[nat.corner, nat.bl]} />
+            <View style={[nat.corner, nat.br]} />
+          </View>
+          <View style={nat.sideDim} />
         </View>
+        <View style={nat.bottomDim}>
+          <Text style={nat.hint}>Point at the driver's QR code</Text>
+          <Pressable style={nat.cancelBtn} onPress={onClose}>
+            <Text style={nat.cancelBtnTxt}>Cancel</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
 
-        <ScrollView style={styles.body} contentContainerStyle={{ flexGrow: 1 }}>
+const FRAME = 220;
+const DIM = 'rgba(0,0,0,0.62)';
+const nat = StyleSheet.create({
+  overlay:      { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+  topDim:       { flex: 1, backgroundColor: DIM },
+  middle:       { flexDirection: 'row', height: FRAME },
+  sideDim:      { flex: 1, backgroundColor: DIM },
+  frame:        { width: FRAME, height: FRAME },
+  bottomDim:    { flex: 1, backgroundColor: DIM, alignItems: 'center', paddingTop: 28, gap: 18 },
 
-          {!scanned ? (
-            <>
-              {/* Camera scanner — native or web */}
-              {!isWeb ? (
-                <View style={styles.scannerWrap}>
-                  {!permission?.granted ? (
-                    <View style={styles.permBox}>
-                      <Text style={styles.permTxt}>Camera permission needed to scan QR codes.</Text>
-                      <Pressable style={styles.permBtn} onPress={requestPermission}>
-                        <Text style={styles.permBtnTxt}>Allow Camera</Text>
-                      </Pressable>
-                    </View>
-                  ) : (
-                    <CameraView
-                      style={styles.camera}
-                      facing="back"
-                      onBarcodeScanned={handleBarcodeScanned}
-                      barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                    >
-                      <View style={styles.scanFrame}>
-                        <View style={[styles.corner, styles.cornerTL]} />
-                        <View style={[styles.corner, styles.cornerTR]} />
-                        <View style={[styles.corner, styles.cornerBL]} />
-                        <View style={[styles.corner, styles.cornerBR]} />
-                      </View>
-                    </CameraView>
-                  )}
-                </View>
-              ) : (
-                <View style={styles.webScanBox}>
-                  <Text style={styles.webScanIcon}>📷</Text>
-                  <Text style={styles.webScanTitle}>Enter Driver Code</Text>
-                  <Text style={styles.webScanSub}>
-                    Ask the driver to share their code from their Profile → My QR Code
-                  </Text>
-                </View>
-              )}
+  corner:       { position: 'absolute', width: 26, height: 26, borderColor: '#fff', borderRadius: 3 },
+  tl: { top: 0,    left: 0,    borderTopWidth: 3,    borderLeftWidth: 3 },
+  tr: { top: 0,    right: 0,   borderTopWidth: 3,    borderRightWidth: 3 },
+  bl: { bottom: 0, left: 0,    borderBottomWidth: 3, borderLeftWidth: 3 },
+  br: { bottom: 0, right: 0,   borderBottomWidth: 3, borderRightWidth: 3 },
 
-              {/* Manual code input */}
-              <View style={styles.manualWrap}>
-                <Text style={styles.manualLabel}>
-                  {isWeb ? 'Paste the full driver code:' : 'Or enter driver code manually:'}
-                </Text>
-                <View style={styles.manualRow}>
-                  <TextInput
-                    style={styles.manualInput}
-                    value={manualCode}
-                    onChangeText={setManualCode}
-                    placeholder="harizana-driver:xxxxxxxx-xxxx..."
-                    placeholderTextColor="#94A3B8"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                  <Pressable
-                    style={[styles.goBtn, !manualCode.trim() && { opacity: 0.5 }]}
-                    onPress={handleManualSubmit}
-                    disabled={!manualCode.trim()}>
-                    <Text style={styles.goTxt}>Go</Text>
-                  </Pressable>
-                </View>
-                {error ? <Text style={styles.errorTxt}>⚠️ {error}</Text> : null}
-              </View>
-            </>
-          ) : (
-            /* Results */
-            <View style={styles.results}>
-              {loading ? (
-                <View style={styles.loadingBox}>
-                  <ActivityIndicator color={C} size="large" />
-                  <Text style={styles.loadingTxt}>Looking up rides…</Text>
-                </View>
-              ) : error ? (
-                <View style={styles.errorBox}>
-                  <Text style={styles.errorTxt}>⚠️ {error}</Text>
-                  <Pressable onPress={reset} style={styles.retryBtn}>
-                    <Text style={styles.retryTxt}>Try Again</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <>
-                  <View style={styles.driverBadge}>
-                    <View style={styles.driverAvatar}>
-                      <Text style={styles.driverInitial}>{driverName[0]?.toUpperCase() ?? 'D'}</Text>
-                    </View>
-                    <View>
-                      <Text style={styles.driverBadgeName}>{driverName}</Text>
-                      <Text style={styles.driverBadgeSub}>
-                        {rides.length} upcoming ride{rides.length !== 1 ? 's' : ''}
-                      </Text>
-                    </View>
-                  </View>
+  hint:         { color: '#fff', fontSize: 15, fontWeight: '600', textAlign: 'center' },
+  cancelBtn:    { backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 14, paddingHorizontal: 32, paddingVertical: 13 },
+  cancelBtnTxt: { color: '#fff', fontSize: 15, fontWeight: '700' },
 
-                  {rides.length === 0 ? (
-                    <View style={styles.emptyBox}>
-                      <Text style={styles.emptyIcon}>🚗</Text>
-                      <Text style={styles.emptyTxt}>No upcoming rides from this driver</Text>
-                    </View>
-                  ) : (
-                    rides.map(r => (
-                      <RideCard
-                        key={r.id}
-                        ride={r}
-                        onPress={() => { onSelectRide(toRideItem(r)); reset(); onClose(); }}
-                      />
-                    ))
-                  )}
-                </>
-              )}
-            </View>
-          )}
-        </ScrollView>
+  permBox:      { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 32, backgroundColor: '#0F172A' },
+  permTitle:    { fontSize: 20, fontWeight: '800', color: '#fff' },
+  permSub:      { fontSize: 14, color: '#94A3B8', textAlign: 'center' },
+  permBtn:      { backgroundColor: C, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 32 },
+  permBtnTxt:   { color: '#fff', fontSize: 15, fontWeight: '700' },
+  cancelWrap:   { paddingVertical: 12 },
+  cancelTxt:    { color: '#94A3B8', fontSize: 15 },
+});
+
+// ── Public component ──────────────────────────────────────────────────────────
+export function QRScannerModal({ visible, onClose, onDriverFound }: Props) {
+  const handleFound = (id: string) => { onClose(); onDriverFound(id); };
+
+  return (
+    <Modal
+      visible={visible}
+      animationType={Platform.OS === 'web' ? 'fade' : 'slide'}
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
+        {Platform.OS === 'web' ? (
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+            <WebScanner onDriverFound={handleFound} onClose={onClose} />
+          </View>
+        ) : (
+          <NativeScanner onDriverFound={handleFound} onClose={onClose} />
+        )}
       </View>
     </Modal>
   );
 }
-
-const CORNER = 22;
-const BORDER = 3;
-
-const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: '#F8FAFC' },
-
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingVertical: 14,
-    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E2E8F0',
-  },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
-  backTxt: { fontSize: 16, color: '#64748B', fontWeight: '700' },
-  title: { fontSize: 17, fontWeight: '800', color: '#1E293B' },
-  rescanBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, backgroundColor: C + '15' },
-  rescanTxt: { fontSize: 13, color: C, fontWeight: '600' },
-
-  body: { flex: 1 },
-
-  /* Camera */
-  scannerWrap: { height: 300, margin: 20, borderRadius: 20, overflow: 'hidden' },
-  camera: { flex: 1 },
-  scanFrame: {
-    position: 'absolute', top: '15%', left: '15%', right: '15%', bottom: '15%',
-  },
-  corner: {
-    position: 'absolute', width: CORNER, height: CORNER, borderColor: '#fff',
-  },
-  cornerTL: { top: 0, left: 0, borderTopWidth: BORDER, borderLeftWidth: BORDER, borderTopLeftRadius: 6 },
-  cornerTR: { top: 0, right: 0, borderTopWidth: BORDER, borderRightWidth: BORDER, borderTopRightRadius: 6 },
-  cornerBL: { bottom: 0, left: 0, borderBottomWidth: BORDER, borderLeftWidth: BORDER, borderBottomLeftRadius: 6 },
-  cornerBR: { bottom: 0, right: 0, borderBottomWidth: BORDER, borderRightWidth: BORDER, borderBottomRightRadius: 6 },
-
-  permBox: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16, backgroundColor: '#1E293B' },
-  permTxt: { color: '#94A3B8', fontSize: 14, textAlign: 'center', paddingHorizontal: 20 },
-  permBtn: { backgroundColor: C, borderRadius: 12, paddingHorizontal: 20, paddingVertical: 10 },
-  permBtnTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
-
-  /* Web placeholder */
-  webScanBox: {
-    margin: 20, borderRadius: 20, padding: 40,
-    backgroundColor: '#EFF6FF', borderWidth: 2, borderColor: C + '30',
-    alignItems: 'center', gap: 10,
-  },
-  webScanIcon: { fontSize: 48 },
-  webScanTitle: { fontSize: 18, fontWeight: '800', color: '#1E293B' },
-  webScanSub: { fontSize: 13, color: '#64748B', textAlign: 'center' },
-
-  /* Manual input */
-  manualWrap: { paddingHorizontal: 20, gap: 10, paddingBottom: 20 },
-  manualLabel: { fontSize: 13, fontWeight: '600', color: '#64748B' },
-  manualRow: { flexDirection: 'row', gap: 10 },
-  manualInput: {
-    flex: 1, backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
-    fontSize: 14, color: '#1E293B', borderWidth: 1, borderColor: '#E2E8F0',
-  },
-  goBtn: {
-    backgroundColor: C, borderRadius: 12, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center',
-  },
-  goTxt: { color: '#fff', fontSize: 15, fontWeight: '700' },
-
-  /* Results */
-  results: { padding: 20, gap: 14 },
-  loadingBox: { alignItems: 'center', gap: 14, paddingTop: 40 },
-  loadingTxt: { fontSize: 14, color: '#94A3B8' },
-  errorBox: { alignItems: 'center', gap: 14, paddingTop: 40 },
-  errorTxt: { color: '#EF4444', fontSize: 13, fontWeight: '500' },
-  retryBtn: { backgroundColor: C, borderRadius: 12, paddingHorizontal: 20, paddingVertical: 10 },
-  retryTxt: { color: '#fff', fontSize: 13, fontWeight: '700' },
-
-  driverBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 14,
-    backgroundColor: '#fff', borderRadius: 16, padding: 16,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 6, elevation: 2,
-  },
-  driverAvatar: {
-    width: 52, height: 52, borderRadius: 26,
-    backgroundColor: C + '20', alignItems: 'center', justifyContent: 'center',
-  },
-  driverInitial: { fontSize: 22, fontWeight: '900', color: C },
-  driverBadgeName: { fontSize: 16, fontWeight: '800', color: '#1E293B' },
-  driverBadgeSub: { fontSize: 13, color: '#94A3B8', marginTop: 2 },
-
-  rideCard: {
-    backgroundColor: '#fff', borderRadius: 14, padding: 16, gap: 8,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 6, elevation: 2,
-  },
-  rideRoute: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  rideCity: { fontSize: 16, fontWeight: '800', color: '#1E293B' },
-  rideArrow: { fontSize: 14, color: '#94A3B8' },
-  rideMeta: { fontSize: 13, color: '#64748B' },
-  rideFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  ridePrice: { fontSize: 17, fontWeight: '900', color: C },
-  rideSeats: {
-    fontSize: 12, fontWeight: '600', color: '#10B981',
-    backgroundColor: '#F0FDF4', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10,
-  },
-
-  emptyBox: { alignItems: 'center', gap: 10, paddingTop: 40 },
-  emptyIcon: { fontSize: 48 },
-  emptyTxt: { fontSize: 15, color: '#94A3B8', fontWeight: '500' },
-});

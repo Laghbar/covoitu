@@ -4,22 +4,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
 import { supabase } from '@/lib/supabase';
-import { PassengerHome }      from './passenger/home';
-import { PassengerSearch }    from './passenger/search';
+import { PassengerHome }       from './passenger/home';
+import { PassengerSearch }     from './passenger/search';
 import { PassengerRideDetail } from './passenger/ride-detail';
-import { PassengerBookings }  from './passenger/bookings';
-import { PassengerPayments }  from './passenger/payments';
-import { PassengerProfile }   from './passenger/profile';
+import { PassengerBookings }   from './passenger/bookings';
+import { PassengerProfile }    from './passenger/profile';
+import { QRScannerModal }      from './passenger/qr-scanner';
+import { DriverPublicProfile } from './passenger/driver-public-profile';
 
 export const PASSENGER_COLOR = '#3B82F6';
 
-type TabKey = 'home' | 'search' | 'bookings' | 'payments' | 'profile';
+type TabKey = 'home' | 'search' | 'bookings' | 'profile';
 
 const TABS: { key: TabKey; emoji: string; label: string }[] = [
   { key: 'home',     emoji: '🏠', label: 'Home'     },
   { key: 'search',   emoji: '🔍', label: 'Search'   },
   { key: 'bookings', emoji: '🎫', label: 'Bookings' },
-  { key: 'payments', emoji: '💳', label: 'Payments' },
   { key: 'profile',  emoji: '👤', label: 'Profile'  },
 ];
 
@@ -112,7 +112,7 @@ function BottomTabBar({
   );
 }
 
-function AcceptToast({ message, onPress, onDone }: { message: string; onPress: () => void; onDone: () => void }) {
+function AcceptToast({ message, onPress, onDone, type = 'accept' }: { message: string; onPress: () => void; onDone: () => void; type?: 'accept' | 'cancel' }) {
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(-20)).current;
 
@@ -132,15 +132,18 @@ function AcceptToast({ message, onPress, onDone }: { message: string; onPress: (
     return () => clearTimeout(timer);
   }, []);
 
+  const isCancel  = type === 'cancel';
+  const accent    = isCancel ? '#EF4444' : '#10B981';
+
   return (
     <Animated.View style={[toastStyles.wrap, { opacity, transform: [{ translateY }] }]}>
-      <Pressable style={toastStyles.inner} onPress={onPress}>
-        <Text style={toastStyles.icon}>🎉</Text>
+      <Pressable style={[toastStyles.inner, { borderLeftColor: accent }]} onPress={onPress}>
+        <Text style={toastStyles.icon}>{isCancel ? '🚫' : '🎉'}</Text>
         <View style={{ flex: 1 }}>
-          <Text style={toastStyles.title}>Booking Accepted!</Text>
+          <Text style={toastStyles.title}>{isCancel ? 'Ride Cancelled' : 'Booking Accepted!'}</Text>
           <Text style={toastStyles.body}>{message}</Text>
         </View>
-        <Text style={toastStyles.action}>View →</Text>
+        <Text style={[toastStyles.action, { color: accent }]}>View →</Text>
       </Pressable>
     </Animated.View>
   );
@@ -167,11 +170,13 @@ const toastStyles = StyleSheet.create({
 export default function PassengerDashboard() {
   const { user } = useAuth();
   const insets   = useSafeAreaInsets();
-  const [tab,          setTab]          = useState<TabKey>('home');
-  const [selectedRide, setSelectedRide] = useState<RideItem | null>(null);
-  const [searchQuery,  setSearchQuery]  = useState<{ from: string; to: string; date: string; seats: string } | null>(null);
-  const [notifCount,   setNotifCount]   = useState(0);
-  const [toast,        setToast]        = useState<{ msg: string; key: number } | null>(null);
+  const [tab,              setTab]              = useState<TabKey>('home');
+  const [selectedRide,    setSelectedRide]    = useState<RideItem | null>(null);
+  const [searchQuery,     setSearchQuery]     = useState<{ from: string; to: string; date: string; seats: string } | null>(null);
+  const [notifCount,      setNotifCount]      = useState(0);
+  const [toast,           setToast]           = useState<{ msg: string; key: number; type?: 'accept' | 'cancel' } | null>(null);
+  const [qrOpen,          setQrOpen]          = useState(false);
+  const [selectedDriver,  setSelectedDriver]  = useState<string | null>(null);
 
   const tabRef = useRef(tab);
   useEffect(() => { tabRef.current = tab; }, [tab]);
@@ -179,12 +184,10 @@ export default function PassengerDashboard() {
   const fetchNotifCount = useCallback(async () => {
     if (!user) return;
     const { count } = await supabase
-      .from('bookings')
+      .from('notifications')
       .select('id', { count: 'exact', head: true })
-      .eq('passenger_id', user.id)
-      .eq('status', 'accepted')
-      .eq('passenger_seen', false);
-    // Don't restore the badge if the user is already on the bookings tab
+      .eq('user_id', user.id)
+      .eq('read', false);
     if (tabRef.current !== 'bookings') {
       setNotifCount(count ?? 0);
     }
@@ -192,58 +195,60 @@ export default function PassengerDashboard() {
 
   useEffect(() => { fetchNotifCount(); }, [fetchNotifCount]);
 
-  // Realtime: update bell badge and show toast when driver accepts
+  const markNotifsSeen = useCallback(async () => {
+    if (!user) return;
+    setNotifCount(0);
+    await supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('user_id', user.id)
+      .eq('read', false);
+  }, [user]);
+
+  // Auto-clear badge whenever the bookings tab is active (covers refresh, direct navigation, etc.)
+  useEffect(() => {
+    if (tab === 'bookings') markNotifsSeen();
+  }, [tab, markNotifsSeen]);
+
+  // Realtime: listen for INSERT on notifications table — reliable, fast, server-filtered
   useEffect(() => {
     if (!user) return;
     const channel = supabase
-      .channel('passenger-bookings-badge')
+      .channel('passenger-notifications-live')
       .on('postgres_changes', {
-        event: 'UPDATE', schema: 'public', table: 'bookings',
-        filter: `passenger_id=eq.${user.id}`,
-      }, async (payload) => {
-        const justAccepted = payload.new?.status === 'accepted' &&
-          (payload.old?.status === 'pending' || payload.new?.passenger_seen === false);
-
-        if (justAccepted) {
-          setToast({ msg: 'Your booking request was accepted by the driver.', key: Date.now() });
-          // Mark as seen immediately so the bell badge stays at 0
-          await supabase
-            .from('bookings')
-            .update({ passenger_seen: true })
-            .eq('id', payload.new.id)
-            .eq('passenger_id', user.id);
-          // Refresh count — will be 0 now
-          fetchNotifCount();
+        event: 'INSERT',
+        schema: 'public',
+        table: 'notifications',
+        filter: `user_id=eq.${user.id}`,
+      }, (payload) => {
+        const n = payload.new as any;
+        if (n.type === 'booking_accepted') {
+          setToast({ msg: n.body, key: Date.now(), type: 'accept' });
+        } else if (n.type === 'ride_cancelled') {
+          setToast({ msg: n.body, key: Date.now(), type: 'cancel' });
+        }
+        if (tabRef.current === 'bookings') {
+          markNotifsSeen();
         } else {
           fetchNotifCount();
         }
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [user, fetchNotifCount]);
-
-  const markNotifsSeen = useCallback(() => {
-    if (!user) return;
-    setNotifCount(0);
-    supabase
-      .from('bookings')
-      .update({ passenger_seen: true })
-      .eq('passenger_id', user.id)
-      .eq('status', 'accepted')
-      .eq('passenger_seen', false);
-  }, [user]);
+  }, [user, fetchNotifCount, markNotifsSeen]);
 
   const navigate = (key: string, payload?: any) => {
     if (key === 'ride-detail') { setSelectedRide(payload); return; }
+    if (key === 'driver-profile') { setSelectedDriver(payload); return; }
     if (key === 'search' && payload) { setSearchQuery(payload); }
     setSelectedRide(null);
+    setSelectedDriver(null);
     setTab(key as TabKey);
   };
 
   const changeTab = (k: TabKey) => {
     setSelectedRide(null);
     setTab(k);
-    if (k === 'bookings') markNotifsSeen();
   };
 
   return (
@@ -262,28 +267,40 @@ export default function PassengerDashboard() {
         <AcceptToast
           key={toast.key}
           message={toast.msg}
+          type={toast.type}
           onPress={() => { setToast(null); changeTab('bookings'); }}
           onDone={() => setToast(null)}
         />
       )}
 
+      {/* QR scanner modal */}
+      <QRScannerModal
+        visible={qrOpen}
+        onClose={() => setQrOpen(false)}
+        onDriverFound={(id) => { setSelectedDriver(id); }}
+      />
+
       {/* Page content */}
       <View style={{ flex: 1 }}>
-        {selectedRide ? (
+        {selectedDriver ? (
+          <DriverPublicProfile
+            driverId={selectedDriver}
+            onBack={() => setSelectedDriver(null)}
+          />
+        ) : selectedRide ? (
           <PassengerRideDetail ride={selectedRide} onBack={() => setSelectedRide(null)} onNavigate={navigate} />
         ) : (
           <>
             {tab === 'home'     && <PassengerHome     onNavigate={navigate} />}
-            {tab === 'search'   && <PassengerSearch   onNavigate={navigate} initialQuery={searchQuery} />}
+            {tab === 'search'   && <PassengerSearch   onNavigate={navigate} initialQuery={searchQuery} onScanQR={() => setQrOpen(true)} />}
             {tab === 'bookings' && <PassengerBookings onNavigate={navigate} />}
-            {tab === 'payments' && <PassengerPayments />}
             {tab === 'profile'  && <PassengerProfile  />}
           </>
         )}
       </View>
 
-      {/* Bottom tab bar — hidden when viewing ride detail */}
-      {!selectedRide && (
+      {/* Bottom tab bar — hidden when viewing detail screens */}
+      {!selectedRide && !selectedDriver && (
         <View style={{ paddingBottom: insets.bottom, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0' }}>
           <BottomTabBar active={tab} onChange={changeTab} bookingCount={notifCount} />
         </View>

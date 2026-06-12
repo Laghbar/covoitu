@@ -16,6 +16,7 @@ type Booking = {
   created_at: string;
   message: string | null;
   ride_completed: boolean;
+  passenger_dismissed: boolean;
   ride: {
     id: string;
     from_city: string; to_city: string;
@@ -64,22 +65,23 @@ function NotifBanner({ message, color, onDone }: { message: string; color: strin
 }
 
 function BookingCard({
-  booking, reviewedRideIds, onCancel, onRate,
+  booking, reviewedRideIds, onCancel, onRate, onDismiss,
 }: {
   booking: Booking;
   reviewedRideIds: Set<string>;
   onCancel: (id: string) => void;
   onRate: (t: RateTarget) => void;
+  onDismiss: (id: string) => void;
 }) {
-  const cfg        = getStatusDisplay(booking);
+  const cfg           = getStatusDisplay(booking);
   const rideCompleted = booking.ride_completed === true;
-  const driverName = booking.ride?.driver?.name ?? 'Driver';
-  const initial    = driverName[0]?.toUpperCase() ?? 'D';
-  const total      = (booking.ride?.price ?? 0) * booking.seats_requested;
-  const canCancel  = (booking.status === 'pending' || booking.status === 'accepted') && !rideCompleted;
-  const rideId     = booking.ride?.id ?? '';
-  const canRate    = booking.status === 'accepted' && rideCompleted && !reviewedRideIds.has(rideId);
-  const alreadyRated = booking.status === 'accepted' && rideCompleted && reviewedRideIds.has(rideId);
+  const driverName    = booking.ride?.driver?.name ?? 'Driver';
+  const initial       = driverName[0]?.toUpperCase() ?? 'D';
+  const total         = (booking.ride?.price ?? 0) * booking.seats_requested;
+  const canCancel     = (booking.status === 'pending' || booking.status === 'accepted') && !rideCompleted;
+  const rideId        = booking.ride?.id ?? '';
+  const canRate       = booking.status === 'accepted' && rideCompleted && !reviewedRideIds.has(rideId);
+  const alreadyRated  = booking.status === 'accepted' && rideCompleted && reviewedRideIds.has(rideId);
 
   const doCancel = () => {
     if (Platform.OS === 'web') {
@@ -141,24 +143,26 @@ function BookingCard({
           <Text style={styles.seatsLbl}>{booking.seats_requested} seat{booking.seats_requested > 1 ? 's' : ''}</Text>
           <Text style={[styles.price, { color: C }]}>{total} MAD</Text>
         </View>
-        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-          {canRate && (
-            <Pressable
-              style={styles.rateBtn}
-              onPress={() => onRate({
-                rideId,
-                driverId:   booking.ride!.driver_id,
-                driverName,
-                route: `${booking.ride?.from_city} → ${booking.ride?.to_city}`,
-              })}>
-              <Text style={styles.rateTxt}>⭐ Rate Trip</Text>
-            </Pressable>
-          )}
-          {alreadyRated && (
-            <Text style={styles.ratedBadge}>⭐ Rated</Text>
-          )}
-        </View>
+        {alreadyRated && <Text style={styles.ratedBadge}>⭐ Rated</Text>}
       </View>
+
+      {canRate && (
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Pressable
+            style={[styles.rateBtn, { flex: 1 }]}
+            onPress={() => onRate({
+              rideId,
+              driverId:   booking.ride!.driver_id,
+              driverName,
+              route: `${booking.ride?.from_city} → ${booking.ride?.to_city}`,
+            })}>
+            <Text style={styles.rateTxt}>⭐ Rate Trip</Text>
+          </Pressable>
+          <Pressable style={styles.skipBtn} onPress={() => onDismiss(booking.id)}>
+            <Text style={styles.skipTxt}>Skip</Text>
+          </Pressable>
+        </View>
+      )}
 
       {canCancel && (
         <Pressable style={styles.cancelBtn} onPress={doCancel}>
@@ -180,6 +184,7 @@ export function PassengerBookings({ onNavigate }: Props) {
   const [tab,             setTab]             = useState<Tab>('pending');
   const [notif,           setNotif]           = useState<Notif | null>(null);
   const [rateTarget,      setRateTarget]      = useState<RateTarget | null>(null);
+  const selfCancelledIds  = useRef<Set<string>>(new Set());
 
   // Clear bell badge when passenger opens this tab
   useEffect(() => {
@@ -200,7 +205,7 @@ export function PassengerBookings({ onNavigate }: Props) {
       supabase
         .from('bookings')
         .select(`
-          id, seats_requested, status, created_at, message, ride_completed,
+          id, seats_requested, status, created_at, message, ride_completed, passenger_dismissed,
           ride:ride_id(
             id, from_city, to_city, departure_date, departure_time,
             price, status, driver_id,
@@ -222,41 +227,52 @@ export function PassengerBookings({ onNavigate }: Props) {
 
   useEffect(() => { fetchBookings(); }, [fetchBookings]);
 
+  // Realtime: keep booking cards in sync with DB state (tab switches, status updates)
   useEffect(() => {
     if (!user) return;
     const channel = supabase
       .channel(`bookings:passenger:${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'bookings', filter: `passenger_id=eq.${user.id}` },
-        (payload) => {
-          const newStatus = payload.new.status as BookingStatus;
-          const rideCompleted = payload.new.ride_completed === true;
-          setBookings(prev =>
-            prev.map(b => b.id === payload.new.id ? { ...b, status: newStatus, ride_completed: rideCompleted } : b),
-          );
-          if (newStatus === 'accepted' &&
-              (payload.old?.status === 'pending' || payload.new?.passenger_seen === false)) {
-            setNotif({ message: '🎉 Your booking was accepted! Check Confirmed tab.', color: '#10B981', key: Date.now() });
-            setTab('confirmed');
-          } else if (newStatus === 'rejected') {
-            setNotif({ message: '❌ Your booking request was declined by the driver.', color: '#EF4444', key: Date.now() });
-            setTab('history');
-          }
-        },
-      )
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'bookings' }, (payload) => {
+        if (payload.new?.passenger_id !== user.id) return;
+        const bookingId   = payload.new.id as string;
+        const newStatus   = payload.new.status as BookingStatus;
+        const rideCompleted = payload.new.ride_completed === true;
+
+        // Keep local card state in sync
+        setBookings(prev =>
+          prev.map(b => b.id === bookingId ? { ...b, status: newStatus, ride_completed: rideCompleted } : b),
+        );
+
+        // Switch tabs to reflect new state (toast is handled by dashboard via notifications table)
+        if (newStatus === 'accepted' && payload.old?.status === 'pending') {
+          setTab('confirmed');
+        } else if (newStatus === 'rejected') {
+          setTab('history');
+        } else if (newStatus === 'cancelled' && !selfCancelledIds.current.has(bookingId)) {
+          setTab('history');
+        }
+        selfCancelledIds.current.delete(bookingId);
+      })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [user]);
 
 
+  const dismissBooking = async (id: string) => {
+    await supabase
+      .from('bookings')
+      .update({ passenger_dismissed: true })
+      .eq('id', id)
+      .eq('passenger_id', user!.id);
+    setBookings(prev => prev.map(b => b.id === id ? { ...b, passenger_dismissed: true } : b));
+  };
+
   const cancelBooking = async (id: string) => {
-    // Use .select() so Supabase returns the updated row — if RLS blocks it we get an empty array
     const { data, error } = await supabase
       .from('bookings')
-      .update({ status: 'cancelled' })
+      .update({ status: 'cancelled', cancelled_by: 'passenger' })
       .eq('id', id)
-      .eq('passenger_id', user!.id)   // ensures RLS applies for the right passenger
+      .eq('passenger_id', user!.id)
       .select('id');
 
     if (error || !data?.length) {
@@ -264,20 +280,28 @@ export function PassengerBookings({ onNavigate }: Props) {
       return;
     }
 
-    // booked_seats is decremented by the DB trigger (sync_booked_seats) when an accepted booking is cancelled
+    selfCancelledIds.current.add(id);
     setBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'cancelled' } : b));
   };
 
   const handleReviewSubmitted = () => {
     if (rateTarget) {
       setReviewedRideIds(prev => new Set([...prev, rateTarget.rideId]));
+      const booking = bookings.find(b => b.ride?.id === rateTarget.rideId);
+      if (booking) dismissBooking(booking.id);
     }
     setRateTarget(null);
   };
 
+  const isDone = (b: Booking) =>
+    b.ride_completed && (b.passenger_dismissed || reviewedRideIds.has(b.ride?.id ?? ''));
+
   const pendingList   = bookings.filter(b => b.status === 'pending');
-  const confirmedList = bookings.filter(b => b.status === 'accepted');
-  const historyList   = bookings.filter(b => b.status === 'rejected' || b.status === 'cancelled');
+  const confirmedList = bookings.filter(b => b.status === 'accepted' && !isDone(b));
+  const historyList   = bookings.filter(b =>
+    b.status === 'rejected' || b.status === 'cancelled' ||
+    (b.status === 'accepted' && isDone(b)),
+  );
   const shown = tab === 'pending' ? pendingList : tab === 'confirmed' ? confirmedList : historyList;
 
   return (
@@ -343,6 +367,7 @@ export function PassengerBookings({ onNavigate }: Props) {
               reviewedRideIds={reviewedRideIds}
               onCancel={cancelBooking}
               onRate={setRateTarget}
+              onDismiss={dismissBooking}
             />
           ))
         )}
@@ -397,6 +422,12 @@ const styles = StyleSheet.create({
   rateTxt: { fontSize: 13, fontWeight: '700', color: '#D97706' },
 
   ratedBadge: { fontSize: 13, color: '#94A3B8', fontWeight: '500' },
+
+  skipBtn: {
+    paddingHorizontal: 16, paddingVertical: 7, borderRadius: 20,
+    backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0',
+  },
+  skipTxt: { fontSize: 13, fontWeight: '600', color: '#94A3B8' },
 
   msgBubble: {
     backgroundColor: '#EFF6FF', borderRadius: 12, padding: 10,
