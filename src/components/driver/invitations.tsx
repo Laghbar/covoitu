@@ -1,199 +1,232 @@
-import { SymbolView } from 'expo-symbols';
-import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+
+import { useAuth } from '@/context/auth';
+import { supabase } from '@/lib/supabase';
 
 const C = '#10B981';
 
-type InvStatus = 'pending' | 'accepted' | 'rejected';
+type Status = 'pending' | 'accepted' | 'rejected';
 
-type Invitation = {
+type Booking = {
   id: string;
-  passenger: string; initial: string; rating: number; trips: number;
-  from: string; to: string; date: string; time: string;
-  seats: number; message?: string;
-  status: InvStatus;
+  seats_requested: number;
+  status: Status;
+  message?: string | null;
+  created_at: string;
+  ride: { id: string; from_city: string; to_city: string; departure_date: string; departure_time: string } | null;
+  passenger: { name: string } | null;
 };
 
-const INITIAL_INVITATIONS: Invitation[] = [
-  {
-    id: '1', passenger: 'Fatima Zahra', initial: 'F', rating: 4.8, trips: 23,
-    from: 'Casablanca', to: 'Rabat', date: 'Lun 15 Jun', time: '08:30', seats: 1,
-    message: 'Bonjour, je suis ponctuelle et calme. Merci!',
-    status: 'pending',
-  },
-  {
-    id: '2', passenger: 'Omar Soussi', initial: 'O', rating: 4.5, trips: 11,
-    from: 'Casablanca', to: 'Rabat', date: 'Lun 15 Jun', time: '08:30', seats: 2,
-    message: 'Je voyage avec un collègue, on est sérieux.',
-    status: 'pending',
-  },
-  {
-    id: '3', passenger: 'Aicha Moukrim', initial: 'A', rating: 4.9, trips: 47,
-    from: 'Rabat', to: 'Casablanca', date: 'Mer 18 Jun', time: '17:00', seats: 1,
-    status: 'pending',
-  },
-  {
-    id: '4', passenger: 'Yassine El Alami', initial: 'Y', rating: 4.7, trips: 8,
-    from: 'Casablanca', to: 'Marrakech', date: 'Sam 21 Jun', time: '07:00', seats: 1,
-    message: 'Merci beaucoup, à bientôt!',
-    status: 'accepted',
-  },
-  {
-    id: '5', passenger: 'Sara Benali', initial: 'S', rating: 4.2, trips: 5,
-    from: 'Fès', to: 'Meknès', date: 'Mar 10 Jun', time: '09:00', seats: 1,
-    status: 'rejected',
-  },
-];
-
-function StarRating({ value }: { value: number }) {
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-      <SymbolView name={{ ios: 'star.fill', android: 'star' } as any} size={11} tintColor="#FCD34D" />
-      <Text style={{ fontSize: 12, fontWeight: '600', color: '#475569' }}>{value.toFixed(1)}</Text>
-    </View>
-  );
+function confirm(msg: string, onConfirm: () => void) {
+  if (Platform.OS === 'web') {
+    if (window.confirm(msg)) onConfirm();
+  } else {
+    const { Alert } = require('react-native');
+    Alert.alert('Confirm', msg, [
+      { text: 'No', style: 'cancel' },
+      { text: 'Yes', onPress: onConfirm },
+    ]);
+  }
 }
 
-function InvitationCard({ inv, onAccept, onReject }: {
-  inv: Invitation;
-  onAccept: (id: string) => void;
-  onReject: (id: string) => void;
-}) {
-  const isPending = inv.status === 'pending';
+function BookingCard({
+  booking, onAccept, onReject,
+}: { booking: Booking; onAccept: (b: Booking) => void; onReject: (id: string) => void }) {
+  const initial = (booking.passenger?.name?.[0] ?? '?').toUpperCase();
+  const fade    = new Animated.Value(1);
+
+  const animateThen = (cb: () => void) => {
+    Animated.timing(fade, { toValue: 0, duration: 250, useNativeDriver: true }).start(cb);
+  };
 
   return (
-    <View style={[styles.card, !isPending && { opacity: 0.72 }]}>
-      {/* Passenger row */}
+    <Animated.View style={[styles.card, { opacity: fade }]}>
+      {/* Passenger */}
       <View style={styles.passengerRow}>
-        <View style={[styles.avatar, { backgroundColor: '#3B82F6' + '18' }]}>
-          <Text style={[styles.avatarInitial, { color: '#3B82F6' }]}>{inv.initial}</Text>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarTxt}>{initial}</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.passengerName}>{inv.passenger}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
-            <StarRating value={inv.rating} />
-            <Text style={styles.tripCount}>{inv.trips} trips</Text>
-          </View>
+          <Text style={styles.passengerName}>{booking.passenger?.name ?? 'Passenger'}</Text>
+          <Text style={styles.seatsRequested}>
+            {booking.seats_requested} seat{booking.seats_requested > 1 ? 's' : ''} requested
+          </Text>
         </View>
-        {!isPending && (
-          <View style={[styles.statusPill, {
-            backgroundColor: inv.status === 'accepted' ? '#F0FDF4' : '#FEF2F2',
-          }]}>
-            <Text style={{
-              fontSize: 12, fontWeight: '700',
-              color: inv.status === 'accepted' ? C : '#EF4444',
-            }}>
-              {inv.status === 'accepted' ? '✓ Accepted' : '✗ Rejected'}
-            </Text>
-          </View>
-        )}
+        <Text style={styles.timeAgo}>
+          {new Date(booking.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+        </Text>
       </View>
 
-      {/* Trip info */}
-      <View style={styles.tripBox}>
-        <View style={styles.tripRow}>
-          <SymbolView name={{ ios: 'location.fill', android: 'location_on' } as any} size={12} tintColor={C} />
-          <Text style={styles.tripText}>{inv.from} → {inv.to}</Text>
-        </View>
-        <View style={styles.tripRow}>
-          <SymbolView name={{ ios: 'calendar', android: 'calendar_today' } as any} size={12} tintColor="#94A3B8" />
-          <Text style={styles.tripMeta}>{inv.date} · {inv.time}</Text>
-        </View>
-        <View style={styles.tripRow}>
-          <SymbolView name={{ ios: 'person.fill', android: 'person' } as any} size={12} tintColor="#94A3B8" />
-          <Text style={styles.tripMeta}>{inv.seats} seat{inv.seats > 1 ? 's' : ''} requested</Text>
-        </View>
-      </View>
-
-      {/* Optional message */}
-      {inv.message && (
-        <View style={styles.messageBubble}>
-          <Text style={styles.messageText}>"{inv.message}"</Text>
+      {/* Trip */}
+      {booking.ride && (
+        <View style={styles.tripBox}>
+          <Text style={styles.tripRoute}>
+            📍 {booking.ride.from_city} → {booking.ride.to_city}
+          </Text>
+          <Text style={styles.tripMeta}>
+            📅 {booking.ride.departure_date} · 🕐 {booking.ride.departure_time}
+          </Text>
         </View>
       )}
 
-      {/* Actions (pending only) */}
-      {isPending && (
-        <View style={styles.actions}>
-          <Pressable
-            style={[styles.actionBtn, { flex: 1, backgroundColor: '#FEF2F2', borderColor: '#EF444430' }]}
-            onPress={() => onReject(inv.id)}>
-            <SymbolView name={{ ios: 'xmark', android: 'close' } as any} size={14} tintColor="#EF4444" />
-            <Text style={[styles.actionText, { color: '#EF4444' }]}>Decline</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.actionBtn, { flex: 1, backgroundColor: C, borderColor: C }]}
-            onPress={() => onAccept(inv.id)}>
-            <SymbolView name={{ ios: 'checkmark', android: 'check' } as any} size={14} tintColor="#fff" />
-            <Text style={[styles.actionText, { color: '#fff' }]}>Accept</Text>
-          </Pressable>
+      {/* Passenger message */}
+      {booking.message ? (
+        <View style={styles.msgBubble}>
+          <Text style={styles.msgText}>"{booking.message}"</Text>
         </View>
-      )}
-    </View>
+      ) : null}
+
+      {/* Actions */}
+      <View style={styles.actions}>
+        <Pressable
+          style={[styles.btn, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}
+          onPress={() => confirm('Decline this request?', () => animateThen(() => onReject(booking.id)))}>
+          <Text style={[styles.btnTxt, { color: '#EF4444' }]}>✕  Decline</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.btn, { backgroundColor: C, borderColor: C }]}
+          onPress={() => confirm('Accept this passenger?', () => animateThen(() => onAccept(booking)))}>
+          <Text style={[styles.btnTxt, { color: '#fff' }]}>✓  Accept</Text>
+        </Pressable>
+      </View>
+    </Animated.View>
   );
 }
 
-type Tab = 'pending' | 'history';
+type Props = { onPendingChange?: (count: number) => void };
 
-export function DriverInvitations() {
-  const [invitations, setInvitations] = useState<Invitation[]>(INITIAL_INVITATIONS);
-  const [tab, setTab] = useState<Tab>('pending');
+export function DriverInvitations({ onPendingChange }: Props) {
+  const { user } = useAuth();
+  const [bookings,    setBookings]    = useState<Booking[]>([]);
+  const [loading,     setLoading]     = useState(true);
+  const [dbError,     setDbError]     = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const accept = (id: string) => {
-    Alert.alert('Accept Request', 'Accept this passenger?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Accept', onPress: () =>
-          setInvitations((prev) => prev.map((i) => i.id === id ? { ...i, status: 'accepted' } : i)),
-      },
-    ]);
+  const fetchBookings = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+
+    const { data: rides } = await supabase
+      .from('rides').select('id').eq('driver_id', user.id);
+
+    const rideIds = rides?.map(r => r.id) ?? [];
+
+    if (rideIds.length === 0) {
+      setBookings([]); setLoading(false); onPendingChange?.(0); return;
+    }
+
+    const { data, error } = await supabase
+      .from('bookings')
+      .select(`
+        id, seats_requested, status, message, created_at,
+        ride:ride_id(id, from_city, to_city, departure_date, departure_time),
+        passenger:passenger_id(name)
+      `)
+      .in('ride_id', rideIds)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+
+    if (error) { setDbError(error.message); setLoading(false); return; }
+
+    const list = (data ?? []) as unknown as Booking[];
+    setBookings(list);
+    setDbError(null);
+    onPendingChange?.(list.length);
+    setLoading(false);
+  }, [user]);
+
+  useEffect(() => { fetchBookings(); }, [fetchBookings]);
+
+  // Realtime: new booking requests come in live
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel('driver-invitations-live')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bookings' }, () => {
+        fetchBookings();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user, fetchBookings]);
+
+  const acceptBooking = async (booking: Booking) => {
+    setActionError(null);
+    const { error } = await supabase.from('bookings').update({ status: 'accepted' }).eq('id', booking.id);
+    if (error) { setActionError('Accept failed: ' + error.message); return; }
+
+    if (booking.ride?.id) {
+      const { data: ride } = await supabase.from('rides').select('booked_seats').eq('id', booking.ride.id).single();
+      await supabase.from('rides')
+        .update({ booked_seats: (ride?.booked_seats ?? 0) + booking.seats_requested })
+        .eq('id', booking.ride.id);
+    }
+
+    setBookings(prev => {
+      const next = prev.filter(b => b.id !== booking.id);
+      onPendingChange?.(next.length);
+      return next;
+    });
   };
 
-  const reject = (id: string) => {
-    Alert.alert('Decline Request', 'Are you sure you want to decline?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Decline', style: 'destructive', onPress: () =>
-          setInvitations((prev) => prev.map((i) => i.id === id ? { ...i, status: 'rejected' } : i)),
-      },
-    ]);
-  };
+  const rejectBooking = async (id: string) => {
+    setActionError(null);
+    const { error } = await supabase.from('bookings').update({ status: 'rejected' }).eq('id', id);
+    if (error) { setActionError('Decline failed: ' + error.message); return; }
 
-  const pending  = invitations.filter((i) => i.status === 'pending');
-  const history  = invitations.filter((i) => i.status !== 'pending');
-  const shown    = tab === 'pending' ? pending : history;
+    setBookings(prev => {
+      const next = prev.filter(b => b.id !== id);
+      onPendingChange?.(next.length);
+      return next;
+    });
+  };
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
-      <Text style={styles.pageTitle}>Invitations</Text>
-      <Text style={styles.pageSub}>Passengers who want to join your trips.</Text>
-
-      {/* Tabs */}
-      <View style={styles.tabs}>
-        <Pressable style={[styles.tabChip, tab === 'pending'  && { backgroundColor: C }]} onPress={() => setTab('pending')}>
-          <Text style={[styles.tabText, tab === 'pending'  && { color: '#fff' }]}>
-            Pending {pending.length > 0 ? `(${pending.length})` : ''}
-          </Text>
-        </Pressable>
-        <Pressable style={[styles.tabChip, tab === 'history' && { backgroundColor: C }]} onPress={() => setTab('history')}>
-          <Text style={[styles.tabText, tab === 'history' && { color: '#fff' }]}>History</Text>
-        </Pressable>
+      <View style={styles.header}>
+        <Text style={styles.pageTitle}>Requests</Text>
+        {bookings.length > 0 && (
+          <View style={styles.countBadge}>
+            <Text style={styles.countTxt}>{bookings.length}</Text>
+          </View>
+        )}
       </View>
+      <Text style={styles.pageSub}>Passengers waiting for your reply.</Text>
 
-      {shown.length === 0 ? (
+      {dbError && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorTxt}>⚠️ {dbError}</Text>
+          <Pressable style={styles.retryBtn} onPress={fetchBookings}>
+            <Text style={styles.retryTxt}>Retry</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {actionError && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorTxt}>⚠️ {actionError}</Text>
+          <Pressable onPress={() => setActionError(null)} style={{ paddingHorizontal: 8 }}>
+            <Text style={{ color: '#EF4444', fontWeight: '700' }}>✕</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {loading ? (
         <View style={styles.empty}>
-          <SymbolView name={{ ios: 'envelope.open.fill', android: 'drafts' } as any} size={52} tintColor="#CBD5E1" />
-          <Text style={styles.emptyTitle}>
-            {tab === 'pending' ? 'No pending requests' : 'No history yet'}
-          </Text>
+          <Text style={styles.emptyTxt}>Loading…</Text>
+        </View>
+      ) : bookings.length === 0 ? (
+        <View style={styles.empty}>
+          <Text style={styles.emptyIcon}>📭</Text>
+          <Text style={styles.emptyTxt}>No pending requests</Text>
           <Text style={styles.emptySub}>
-            {tab === 'pending' ? 'Passenger booking requests will appear here.' : 'Accepted and declined requests will show here.'}
+            When passengers book your trips, their requests will appear here.
           </Text>
         </View>
       ) : (
-        shown.map((inv) => (
-          <InvitationCard key={inv.id} inv={inv} onAccept={accept} onReject={reject} />
+        bookings.map(b => (
+          <BookingCard key={b.id} booking={b} onAccept={acceptBooking} onReject={rejectBooking} />
         ))
       )}
 
@@ -204,47 +237,62 @@ export function DriverInvitations() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   content: { padding: 20, gap: 16, paddingBottom: 32 },
-  pageTitle: { fontSize: 24, fontWeight: '800', color: '#1E293B', letterSpacing: -0.5 },
-  pageSub: { fontSize: 14, color: '#64748B', marginTop: -8 },
 
-  tabs: { flexDirection: 'row', gap: 8 },
-  tabChip: { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 20, backgroundColor: '#F1F5F9' },
-  tabText: { fontSize: 13, fontWeight: '600', color: '#64748B' },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  pageTitle: { fontSize: 24, fontWeight: '800', color: '#1E293B', letterSpacing: -0.5 },
+  countBadge: {
+    minWidth: 26, height: 26, borderRadius: 13,
+    backgroundColor: C, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6,
+  },
+  countTxt: { color: '#fff', fontSize: 13, fontWeight: '900' },
+  pageSub: { fontSize: 14, color: '#64748B', marginTop: -8 },
 
   card: {
     backgroundColor: '#fff', borderRadius: 16, padding: 16, gap: 12,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 6, elevation: 2,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 3,
+    borderWidth: 1, borderColor: '#F0FDF4',
   },
 
   passengerRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  avatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  avatarInitial: { fontSize: 17, fontWeight: '800' },
-  passengerName: { fontSize: 15, fontWeight: '700', color: '#1E293B' },
-  tripCount: { fontSize: 12, color: '#94A3B8' },
-  statusPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  avatar: {
+    width: 46, height: 46, borderRadius: 23,
+    backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center',
+  },
+  avatarTxt:      { fontSize: 18, fontWeight: '800', color: '#3B82F6' },
+  passengerName:  { fontSize: 15, fontWeight: '700', color: '#1E293B' },
+  seatsRequested: { fontSize: 12, color: '#94A3B8', marginTop: 2 },
+  timeAgo:        { fontSize: 11, color: '#CBD5E1' },
 
   tripBox: {
-    backgroundColor: '#F8FAFC', borderRadius: 12, padding: 12, gap: 6,
+    backgroundColor: '#F8FAFC', borderRadius: 12, padding: 12, gap: 4,
     borderWidth: 1, borderColor: '#F1F5F9',
   },
-  tripRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  tripText: { fontSize: 14, fontWeight: '600', color: '#1E293B' },
-  tripMeta: { fontSize: 13, color: '#64748B' },
+  tripRoute: { fontSize: 14, fontWeight: '700', color: '#1E293B' },
+  tripMeta:  { fontSize: 13, color: '#64748B' },
 
-  messageBubble: {
+  msgBubble: {
     backgroundColor: '#F0FDF4', borderRadius: 12, padding: 12,
     borderLeftWidth: 3, borderLeftColor: C,
   },
-  messageText: { fontSize: 13, color: '#374151', fontStyle: 'italic' },
+  msgText: { fontSize: 13, color: '#374151', fontStyle: 'italic' },
 
   actions: { flexDirection: 'row', gap: 10 },
-  actionBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, paddingVertical: 11, borderRadius: 12, borderWidth: 1,
+  btn: {
+    flex: 1, paddingVertical: 12, borderRadius: 12, borderWidth: 1,
+    alignItems: 'center', justifyContent: 'center',
   },
-  actionText: { fontSize: 14, fontWeight: '700' },
+  btnTxt: { fontSize: 14, fontWeight: '700' },
 
-  empty: { alignItems: 'center', paddingVertical: 56, gap: 10 },
-  emptyTitle: { fontSize: 16, color: '#94A3B8', fontWeight: '600' },
-  emptySub: { fontSize: 13, color: '#CBD5E1', textAlign: 'center', paddingHorizontal: 20 },
+  errorBanner: {
+    backgroundColor: '#FEF2F2', borderRadius: 12, padding: 14,
+    borderWidth: 1, borderColor: '#FECACA', gap: 10,
+  },
+  errorTxt: { color: '#EF4444', fontSize: 13, fontWeight: '500' },
+  retryBtn: { backgroundColor: '#EF4444', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 7, alignSelf: 'flex-start' },
+  retryTxt: { color: '#fff', fontSize: 13, fontWeight: '700' },
+
+  empty:     { alignItems: 'center', paddingVertical: 60, gap: 12 },
+  emptyIcon: { fontSize: 52 },
+  emptyTxt:  { fontSize: 16, color: '#94A3B8', fontWeight: '600' },
+  emptySub:  { fontSize: 13, color: '#CBD5E1', textAlign: 'center', paddingHorizontal: 20 },
 });

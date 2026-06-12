@@ -1,6 +1,11 @@
+import DateTimePicker from '@react-native-community/datetimepicker';
+import * as Location from 'expo-location';
 import { SymbolView } from 'expo-symbols';
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+
+import { useAuth } from '@/context/auth';
+import { supabase } from '@/lib/supabase';
 
 const C = '#10B981';
 
@@ -54,19 +59,143 @@ function StepHeader({ num, title }: { num: number; title: string }) {
   );
 }
 
+function PickerField({
+  icon, emoji, label, value, onPress,
+}: { icon: any; emoji: string; label: string; value: string; onPress: () => void }) {
+  return (
+    <Pressable style={styles.pickerBtn} onPress={onPress}>
+      <SymbolView name={icon} size={16} tintColor={value ? C : '#94A3B8'} />
+      <Text style={[styles.pickerText, value ? styles.pickerTextFilled : null]}>
+        {emoji} {value || label}
+      </Text>
+      <Text style={styles.chevron}>▾</Text>
+    </Pressable>
+  );
+}
+
+function WebField({ emoji, label, type, value, min, onChange }: {
+  emoji: string; label: string; type: 'date' | 'time';
+  value: string; min?: string; onChange: (v: string) => void;
+}) {
+  return (
+    <View style={styles.pickerBtn}>
+      <Text style={styles.pickerEmoji}>{emoji}</Text>
+      {/* @ts-ignore – web-only HTML element */}
+      <input
+        type={type}
+        value={value || ''}
+        min={min}
+        onChange={(e: any) => onChange(e.target.value)}
+        style={{
+          flex: 1, border: 'none', background: 'transparent',
+          fontSize: 14, color: value ? '#1E293B' : '#94A3B8',
+          outline: 'none', cursor: 'pointer', minWidth: 0,
+        }}
+      />
+    </View>
+  );
+}
+
 type Props = { onNavigate: (key: string) => void };
 
 export function DriverCreateTrip({ onNavigate }: Props) {
+  const { user } = useAuth();
   const [from, setFrom]       = useState('');
   const [to, setTo]           = useState('');
-  const [date, setDate]       = useState('');
-  const [time, setTime]       = useState('');
+  const [dateObj, setDateObj] = useState<Date>(new Date());
+  const [timeObj, setTimeObj] = useState<Date>(new Date());
+  const [showDate, setShowDate] = useState(false);
+  const [showTime, setShowTime] = useState(false);
   const [seats, setSeats]     = useState('3');
   const [price, setPrice]     = useState('');
   const [pickup, setPickup]   = useState('');
   const [dropoff, setDropoff] = useState('');
   const [note, setNote]       = useState('');
+  const [carMake,  setCarMake]  = useState('');
+  const [carModel, setCarModel] = useState('');
+  const [carYear,  setCarYear]  = useState('');
+  const [carColor, setCarColor] = useState('');
+  const [carPlate, setCarPlate] = useState('');
   const [prefs, setPrefs]     = useState(['luggage', 'nosmoke']);
+  const [loading, setLoading] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [locLoading, setLocLoading] = useState(false);
+
+  const applyCity = (raw: string) => {
+    const exact   = CITIES.find(c => c.toLowerCase() === raw.toLowerCase());
+    const partial = CITIES.find(c =>
+      c.toLowerCase().includes(raw.toLowerCase()) || raw.toLowerCase().includes(c.toLowerCase())
+    );
+    setFrom(exact ?? partial ?? raw);
+  };
+
+  const detectDeparture = () => {
+    setLocLoading(true);
+    setSubmitError(null);
+
+    if (Platform.OS === 'web') {
+      if (!('geolocation' in navigator)) {
+        setSubmitError('Geolocation not supported by this browser.');
+        setLocLoading(false);
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        async ({ coords }) => {
+          try {
+            const res  = await fetch(
+              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.latitude}&lon=${coords.longitude}`,
+              { headers: { 'Accept-Language': 'en' } },
+            );
+            const data = await res.json();
+            const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county;
+            if (city) applyCity(city);
+            else setSubmitError('City not detected. Please select manually.');
+          } catch {
+            setSubmitError('Could not fetch city. Please select manually.');
+          }
+          setLocLoading(false);
+        },
+        () => {
+          setSubmitError('Location denied. Allow location access in your browser and try again.');
+          setLocLoading(false);
+        },
+        { timeout: 10000 },
+      );
+      return;
+    }
+
+    // Native (iOS / Android)
+    Location.requestForegroundPermissionsAsync().then(async ({ status }) => {
+      if (status !== 'granted') {
+        setSubmitError('Location permission denied.');
+        setLocLoading(false);
+        return;
+      }
+      try {
+        const pos   = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const [geo] = await Location.reverseGeocodeAsync(pos.coords);
+        const raw   = geo?.city || geo?.subregion || geo?.region || '';
+        if (raw) applyCity(raw);
+        else setSubmitError('Could not detect city. Select manually.');
+      } catch {
+        setSubmitError('Location unavailable. Select manually.');
+      }
+      setLocLoading(false);
+    });
+  };
+  const [datePicked, setDatePicked] = useState(false);
+  const [timePicked, setTimePicked] = useState(false);
+
+  const dateStr = datePicked
+    ? dateObj.toLocaleDateString('fr-MA', { day: '2-digit', month: 'short', year: 'numeric' })
+    : '';
+  const timeStr = timePicked
+    ? timeObj.toLocaleTimeString('fr-MA', { hour: '2-digit', minute: '2-digit', hour12: false })
+    : '';
+  const dateISO = datePicked ? dateObj.toISOString().split('T')[0] : '';
+  const timeISO = timePicked
+    ? `${String(timeObj.getHours()).padStart(2,'0')}:${String(timeObj.getMinutes()).padStart(2,'0')}`
+    : '';
 
   const toggle = (k: string) =>
     setPrefs((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
@@ -74,19 +203,42 @@ export function DriverCreateTrip({ onNavigate }: Props) {
   const changeSeats = (d: number) =>
     setSeats((s) => String(Math.min(8, Math.max(1, Number(s) + d))));
 
-  const submit = () => {
-    if (!from || !to || !date || !time || !price) {
-      Alert.alert('Missing fields', 'Please fill in all required fields (route, date, time and price).');
+  const submit = async () => {
+    setSubmitError(null);
+    if (!from || !to || !datePicked || !timePicked || !price) {
+      setSubmitError('Please fill in route, date, time and price.');
       return;
     }
-    Alert.alert(
-      '🎉 Trip Published!',
-      `${from} → ${to}\n${date} at ${time}\n${seats} seats · ${price} MAD/seat`,
-      [
-        { text: 'See My Rides', onPress: () => onNavigate('rides') },
-        { text: 'New Trip', style: 'cancel' },
-      ],
-    );
+    if (!user) { setSubmitError('Not logged in.'); return; }
+
+    setLoading(true);
+    const { error } = await supabase.from('rides').insert({
+      driver_id:       user.id,
+      from_city:       from,
+      to_city:         to,
+      departure_date:  dateISO,
+      departure_time:  timeISO,
+      seats:           Number(seats),
+      price:           Number(price),
+      pickup_point:    pickup || null,
+      dropoff_point:   dropoff || null,
+      preferences:     prefs,
+      note:            note || null,
+      status:          'active',
+      car_make:        carMake  || null,
+      car_model:       carModel || null,
+      car_year:        carYear  || null,
+      car_color:       carColor || null,
+      car_plate:       carPlate || null,
+    });
+    setLoading(false);
+
+    if (error) {
+      setSubmitError(error.message);
+      return;
+    }
+
+    onNavigate('rides');
   };
 
   return (
@@ -105,6 +257,10 @@ export function DriverCreateTrip({ onNavigate }: Props) {
           onSelect={setFrom}
           icon={{ ios: 'location.fill', android: 'location_on' }}
         />
+
+        <Pressable style={styles.locBtn} onPress={detectDeparture} disabled={locLoading}>
+          <Text style={styles.locBtnText}>{locLoading ? 'Detecting…' : '📍  Use my current location'}</Text>
+        </Pressable>
 
         {/* Swap */}
         <View style={styles.swapRow}>
@@ -129,27 +285,84 @@ export function DriverCreateTrip({ onNavigate }: Props) {
       <View style={styles.card}>
         <StepHeader num={2} title="Date & Time" />
         <View style={styles.row}>
-          <View style={[styles.inputBox, { flex: 3 }]}>
-            <SymbolView name={{ ios: 'calendar', android: 'calendar_today' } as any} size={15} tintColor="#94A3B8" />
-            <TextInput
-              style={styles.inputText}
-              value={date}
-              onChangeText={setDate}
-              placeholder="YYYY-MM-DD *"
-              placeholderTextColor="#94A3B8"
-            />
+          <View style={{ flex: 3 }}>
+            {Platform.OS === 'web' ? (
+              <WebField
+                emoji="📅" label="Date *" type="date" value={dateISO}
+                min={new Date().toISOString().split('T')[0]}
+                onChange={(v) => {
+                  if (v) { setDateObj(new Date(v + 'T12:00:00')); setDatePicked(true); }
+                }}
+              />
+            ) : (
+              <PickerField
+                icon={{ ios: 'calendar', android: 'calendar_today' } as any}
+                emoji="📅" label="Pick a date *" value={dateStr}
+                onPress={() => setShowDate(true)}
+              />
+            )}
           </View>
-          <View style={[styles.inputBox, { flex: 2 }]}>
-            <SymbolView name={{ ios: 'clock.fill', android: 'schedule' } as any} size={15} tintColor="#94A3B8" />
-            <TextInput
-              style={styles.inputText}
-              value={time}
-              onChangeText={setTime}
-              placeholder="HH:MM *"
-              placeholderTextColor="#94A3B8"
-            />
+          <View style={{ flex: 2 }}>
+            {Platform.OS === 'web' ? (
+              <WebField
+                emoji="⏰" label="Time *" type="time" value={timeISO}
+                onChange={(v) => {
+                  if (v) {
+                    const [h, m] = v.split(':').map(Number);
+                    const t = new Date(); t.setHours(h, m, 0, 0);
+                    setTimeObj(t); setTimePicked(true);
+                  }
+                }}
+              />
+            ) : (
+              <PickerField
+                icon={{ ios: 'clock.fill', android: 'schedule' } as any}
+                emoji="⏰" label="Pick time *" value={timeStr}
+                onPress={() => setShowTime(true)}
+              />
+            )}
           </View>
         </View>
+
+        {/* Native date picker (iOS / Android only) */}
+        {Platform.OS !== 'web' && showDate && (
+          <DateTimePicker
+            value={dateObj}
+            mode="date"
+            display={Platform.OS === 'ios' ? 'inline' : 'default'}
+            minimumDate={new Date()}
+            onChange={(_e, d) => {
+              if (Platform.OS !== 'ios') setShowDate(false);
+              if (d) { setDateObj(d); setDatePicked(true); }
+            }}
+            themeVariant="light"
+          />
+        )}
+        {Platform.OS === 'ios' && showDate && (
+          <Pressable style={[styles.doneBtn, { backgroundColor: C }]} onPress={() => setShowDate(false)}>
+            <Text style={styles.doneBtnText}>Done</Text>
+          </Pressable>
+        )}
+
+        {/* Native time picker (iOS / Android only) */}
+        {Platform.OS !== 'web' && showTime && (
+          <DateTimePicker
+            value={timeObj}
+            mode="time"
+            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+            is24Hour
+            onChange={(_e, t) => {
+              if (Platform.OS !== 'ios') setShowTime(false);
+              if (t) { setTimeObj(t); setTimePicked(true); }
+            }}
+            themeVariant="light"
+          />
+        )}
+        {Platform.OS === 'ios' && showTime && (
+          <Pressable style={[styles.doneBtn, { backgroundColor: C }]} onPress={() => setShowTime(false)}>
+            <Text style={styles.doneBtnText}>Done</Text>
+          </Pressable>
+        )}
       </View>
 
       {/* Step 3 – Seats & Price */}
@@ -206,9 +419,38 @@ export function DriverCreateTrip({ onNavigate }: Props) {
         </View>
       </View>
 
-      {/* Step 5 – Preferences */}
+      {/* Step 5 – Vehicle */}
       <View style={styles.card}>
-        <StepHeader num={5} title="Preferences" />
+        <StepHeader num={5} title="Your Vehicle" />
+        <View style={styles.row}>
+          <View style={[styles.inputBox, { flex: 1 }]}>
+            <SymbolView name={{ ios: 'car.fill', android: 'directions_car' } as any} size={15} tintColor={carMake ? C : '#94A3B8'} />
+            <TextInput style={styles.inputText} value={carMake} onChangeText={setCarMake} placeholder="Make (e.g. Dacia)" placeholderTextColor="#94A3B8" />
+          </View>
+          <View style={[styles.inputBox, { flex: 1 }]}>
+            <SymbolView name={{ ios: 'car.side.fill', android: 'commute' } as any} size={15} tintColor={carModel ? C : '#94A3B8'} />
+            <TextInput style={styles.inputText} value={carModel} onChangeText={setCarModel} placeholder="Model (e.g. Logan)" placeholderTextColor="#94A3B8" />
+          </View>
+        </View>
+        <View style={styles.row}>
+          <View style={[styles.inputBox, { flex: 1 }]}>
+            <SymbolView name={{ ios: 'calendar', android: 'calendar_today' } as any} size={15} tintColor={carYear ? C : '#94A3B8'} />
+            <TextInput style={styles.inputText} value={carYear} onChangeText={setCarYear} placeholder="Year" placeholderTextColor="#94A3B8" keyboardType="numeric" maxLength={4} />
+          </View>
+          <View style={[styles.inputBox, { flex: 1 }]}>
+            <SymbolView name={{ ios: 'paintpalette.fill', android: 'palette' } as any} size={15} tintColor={carColor ? C : '#94A3B8'} />
+            <TextInput style={styles.inputText} value={carColor} onChangeText={setCarColor} placeholder="Color" placeholderTextColor="#94A3B8" />
+          </View>
+        </View>
+        <View style={styles.inputBox}>
+          <SymbolView name={{ ios: 'number.square.fill', android: 'confirmation_number' } as any} size={15} tintColor={carPlate ? C : '#94A3B8'} />
+          <TextInput style={styles.inputText} value={carPlate} onChangeText={setCarPlate} placeholder="Plate number (e.g. 12345 A 5)" placeholderTextColor="#94A3B8" autoCapitalize="characters" />
+        </View>
+      </View>
+
+      {/* Step 6 – Preferences */}
+      <View style={styles.card}>
+        <StepHeader num={6} title="Preferences" />
         <View style={styles.prefGrid}>
           {PREFS.map((p) => {
             const on = prefs.includes(p.key);
@@ -225,9 +467,9 @@ export function DriverCreateTrip({ onNavigate }: Props) {
         </View>
       </View>
 
-      {/* Step 6 – Note */}
+      {/* Step 7 – Note */}
       <View style={styles.card}>
-        <StepHeader num={6} title="Note for passengers (optional)" />
+        <StepHeader num={7} title="Note for passengers (optional)" />
         <TextInput
           style={styles.noteInput}
           value={note}
@@ -239,10 +481,17 @@ export function DriverCreateTrip({ onNavigate }: Props) {
         />
       </View>
 
+      {/* Inline error */}
+      {submitError && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{submitError}</Text>
+        </View>
+      )}
+
       {/* Publish */}
-      <Pressable style={[styles.publishBtn, { backgroundColor: C }]} onPress={submit}>
+      <Pressable style={[styles.publishBtn, { backgroundColor: loading ? C + '80' : C }]} onPress={submit} disabled={loading}>
         <SymbolView name={{ ios: 'checkmark.circle.fill', android: 'check_circle' } as any} size={20} tintColor="#fff" />
-        <Text style={styles.publishText}>Publish Trip</Text>
+        <Text style={styles.publishText}>{loading ? 'Publishing…' : 'Publish Trip'}</Text>
       </Pressable>
 
     </ScrollView>
@@ -322,4 +571,23 @@ const styles = StyleSheet.create({
     gap: 10, borderRadius: 16, paddingVertical: 16,
   },
   publishText: { color: '#fff', fontSize: 16, fontWeight: '800' },
+
+  pickerBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#F8FAFC', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13,
+    borderWidth: 1, borderColor: '#E2E8F0',
+  },
+  pickerText: { flex: 1, fontSize: 14, color: '#94A3B8' },
+  pickerTextFilled: { color: '#1E293B', fontWeight: '600' },
+  pickerEmoji: { fontSize: 16 },
+  chevron: { fontSize: 13, color: '#94A3B8' },
+
+  doneBtn: { borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 6 },
+  doneBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+
+  errorBanner: { backgroundColor: '#FEF2F2', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#FECACA' },
+  errorText: { color: '#EF4444', fontSize: 14, fontWeight: '500' },
+
+  locBtn: { alignSelf: 'flex-start' },
+  locBtnText: { fontSize: 13, color: C, fontWeight: '600' },
 });

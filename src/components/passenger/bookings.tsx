@@ -1,165 +1,354 @@
-import { SymbolView } from 'expo-symbols';
-import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+
+import { useAuth } from '@/context/auth';
+import { supabase } from '@/lib/supabase';
+import { RateModal } from './rate-modal';
 
 const C = '#3B82F6';
 
-type BookingStatus = 'upcoming' | 'completed' | 'cancelled';
+type BookingStatus = 'pending' | 'accepted' | 'rejected' | 'cancelled';
 
 type Booking = {
-  id: string; from: string; to: string; date: string; time: string;
-  price: number; seats: number; status: BookingStatus;
-  driver: { name: string; initial: string; rating: number };
-  car: string; rated?: boolean;
+  id: string;
+  seats_requested: number;
+  status: BookingStatus;
+  created_at: string;
+  message: string | null;
+  ride_completed: boolean;
+  ride: {
+    id: string;
+    from_city: string; to_city: string;
+    departure_date: string; departure_time: string;
+    price: number;
+    status: string;
+    driver_id: string;
+    driver: { name: string } | null;
+  } | null;
 };
 
-const BOOKINGS: Booking[] = [
-  {
-    id: '1', from: 'Casablanca', to: 'Rabat', date: '15 Jun 2026', time: '08:30',
-    price: 45, seats: 1, status: 'upcoming',
-    driver: { name: 'Mohammed Alami', initial: 'M', rating: 4.8 },
-    car: 'Dacia Logan 2020',
-  },
-  {
-    id: '2', from: 'Rabat', to: 'Fès', date: '17 Jun 2026', time: '06:30',
-    price: 160, seats: 2, status: 'upcoming',
-    driver: { name: 'Youssef Tazi', initial: 'Y', rating: 4.6 },
-    car: 'Hyundai i20 2019',
-  },
-  {
-    id: '3', from: 'Casablanca', to: 'Marrakech', date: '02 Jun 2026', time: '07:00',
-    price: 120, seats: 1, status: 'completed',
-    driver: { name: 'Karim Lahlou', initial: 'K', rating: 4.7 },
-    car: 'Volkswagen Polo 2021', rated: false,
-  },
-  {
-    id: '4', from: 'Tanger', to: 'Casablanca', date: '18 May 2026', time: '10:00',
-    price: 130, seats: 1, status: 'completed',
-    driver: { name: 'Nadia El Fassi', initial: 'N', rating: 4.9 },
-    car: 'Toyota Yaris 2023', rated: true,
-  },
-  {
-    id: '5', from: 'Agadir', to: 'Marrakech', date: '10 May 2026', time: '08:00',
-    price: 95, seats: 1, status: 'cancelled',
-    driver: { name: 'Hassan Ouaziz', initial: 'H', rating: 4.5 },
-    car: 'Peugeot 208 2021',
-  },
-];
+type RateTarget = { rideId: string; driverId: string; driverName: string; route: string };
 
-const STATUS_META: Record<BookingStatus, { label: string; bg: string; color: string }> = {
-  upcoming:  { label: 'Upcoming',  bg: '#EFF6FF', color: C },
-  completed: { label: 'Completed', bg: '#F0FDF4', color: '#10B981' },
-  cancelled: { label: 'Cancelled', bg: '#FEF2F2', color: '#EF4444' },
+type Tab = 'pending' | 'confirmed' | 'history';
+
+const STATUS_CFG: Record<BookingStatus, { label: string; emoji: string; bg: string; color: string }> = {
+  pending:   { label: 'Pending',   emoji: '⏳', bg: '#FFFBEB', color: '#D97706' },
+  accepted:  { label: 'Confirmed', emoji: '✅', bg: '#F0FDF4', color: '#10B981' },
+  rejected:  { label: 'Declined',  emoji: '❌', bg: '#FEF2F2', color: '#EF4444' },
+  cancelled: { label: 'Cancelled', emoji: '🚫', bg: '#F8FAFC', color: '#94A3B8' },
 };
 
-function BookingCard({ booking }: { booking: Booking }) {
-  const meta = STATUS_META[booking.status];
+function getStatusDisplay(booking: Booking) {
+  if (booking.status === 'accepted' && booking.ride_completed) {
+    return { label: 'Completed', emoji: '🎉', bg: '#EFF6FF', color: '#3B82F6' };
+  }
+  return STATUS_CFG[booking.status];
+}
+
+function NotifBanner({ message, color, onDone }: { message: string; color: string; onDone: () => void }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.timing(opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.delay(3500),
+      Animated.timing(opacity, { toValue: 0, duration: 400, useNativeDriver: true }),
+    ]).start(onDone);
+  }, []);
+
+  return (
+    <Animated.View style={[styles.banner, { backgroundColor: color, opacity }]}>
+      <Text style={styles.bannerTxt}>{message}</Text>
+    </Animated.View>
+  );
+}
+
+function BookingCard({
+  booking, reviewedRideIds, onCancel, onRate,
+}: {
+  booking: Booking;
+  reviewedRideIds: Set<string>;
+  onCancel: (id: string) => void;
+  onRate: (t: RateTarget) => void;
+}) {
+  const cfg        = getStatusDisplay(booking);
+  const rideCompleted = booking.ride_completed === true;
+  const driverName = booking.ride?.driver?.name ?? 'Driver';
+  const initial    = driverName[0]?.toUpperCase() ?? 'D';
+  const total      = (booking.ride?.price ?? 0) * booking.seats_requested;
+  const canCancel  = (booking.status === 'pending' || booking.status === 'accepted') && !rideCompleted;
+  const rideId     = booking.ride?.id ?? '';
+  const canRate    = booking.status === 'accepted' && rideCompleted && !reviewedRideIds.has(rideId);
+  const alreadyRated = booking.status === 'accepted' && rideCompleted && reviewedRideIds.has(rideId);
+
+  const doCancel = () => {
+    if (Platform.OS === 'web') {
+      if (window.confirm('Cancel this booking?')) onCancel(booking.id);
+    } else {
+      const { Alert } = require('react-native');
+      Alert.alert('Cancel Booking', 'Are you sure?', [
+        { text: 'No', style: 'cancel' },
+        { text: 'Yes, Cancel', style: 'destructive', onPress: () => onCancel(booking.id) },
+      ]);
+    }
+  };
 
   return (
     <View style={styles.card}>
       <View style={styles.cardTop}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.route}>{booking.from} → {booking.to}</Text>
-          <Text style={styles.dateLine}>{booking.date} · {booking.time}</Text>
+          <Text style={styles.route}>
+            {booking.ride?.from_city ?? '—'} → {booking.ride?.to_city ?? '—'}
+          </Text>
+          <Text style={styles.dateLine}>
+            📅 {booking.ride?.departure_date ?? ''} · 🕐 {booking.ride?.departure_time ?? ''}
+          </Text>
         </View>
-        <View style={[styles.statusPill, { backgroundColor: meta.bg }]}>
-          <Text style={[styles.statusText, { color: meta.color }]}>{meta.label}</Text>
+        <View style={[styles.statusPill, { backgroundColor: cfg.bg }]}>
+          <Text style={[styles.statusTxt, { color: cfg.color }]}>{cfg.emoji} {cfg.label}</Text>
         </View>
       </View>
 
       <View style={styles.divider} />
 
       <View style={styles.driverRow}>
-        <View style={[styles.driverAvatar, { backgroundColor: C + '15' }]}>
-          <Text style={[styles.driverInitial, { color: C }]}>{booking.driver.initial}</Text>
+        <View style={styles.driverAvatar}>
+          <Text style={styles.driverInitial}>{initial}</Text>
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.driverName}>{booking.driver.name}</Text>
-          <Text style={styles.carText}>{booking.car}</Text>
-        </View>
-        <View style={styles.ratingBadge}>
-          <SymbolView name={{ ios: 'star.fill', android: 'star' } as any} size={11} tintColor="#F59E0B" />
-          <Text style={styles.ratingText}>{booking.driver.rating}</Text>
-        </View>
+        <Text style={styles.driverName}>{driverName}</Text>
       </View>
+
+      {booking.message ? (
+        <View style={styles.msgBubble}>
+          <Text style={styles.msgLabel}>Your message to driver:</Text>
+          <Text style={styles.msgText}>"{booking.message}"</Text>
+        </View>
+      ) : null}
+
+      {booking.status === 'accepted' && !rideCompleted && (
+        <View style={styles.acceptedBanner}>
+          <Text style={styles.acceptedTxt}>✅ Driver accepted your booking</Text>
+        </View>
+      )}
+      {rideCompleted && (
+        <View style={[styles.acceptedBanner, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+          <Text style={[styles.acceptedTxt, { color: '#3B82F6' }]}>🎉 Trip completed — thanks for riding!</Text>
+        </View>
+      )}
 
       <View style={styles.cardFooter}>
         <View>
-          <Text style={styles.priceLabel}>{booking.seats} seat{booking.seats > 1 ? 's' : ''}</Text>
-          <Text style={[styles.price, { color: C }]}>{booking.price} MAD</Text>
+          <Text style={styles.seatsLbl}>{booking.seats_requested} seat{booking.seats_requested > 1 ? 's' : ''}</Text>
+          <Text style={[styles.price, { color: C }]}>{total} MAD</Text>
         </View>
-        <View style={styles.footerActions}>
-          {booking.status === 'upcoming' && (
-            <>
-              <Pressable style={[styles.actionBtn, { borderColor: C + '40' }]}
-                onPress={() => Alert.alert('Contact Driver', 'Opening chat...')}>
-                <SymbolView name={{ ios: 'message.fill', android: 'chat' } as any} size={13} tintColor={C} />
-                <Text style={[styles.actionText, { color: C }]}>Message</Text>
-              </Pressable>
-              <Pressable style={[styles.actionBtn, { borderColor: '#EF444440' }]}
-                onPress={() => Alert.alert('Cancel Booking', 'Are you sure?', [
-                  { text: 'No', style: 'cancel' },
-                  { text: 'Yes, Cancel', style: 'destructive' },
-                ])}>
-                <Text style={[styles.actionText, { color: '#EF4444' }]}>Cancel</Text>
-              </Pressable>
-            </>
-          )}
-          {booking.status === 'completed' && !booking.rated && (
-            <Pressable style={[styles.actionBtn, { backgroundColor: '#FFFBEB', borderColor: '#F59E0B40' }]}
-              onPress={() => Alert.alert('Rate Driver', 'Rating feature coming soon.')}>
-              <SymbolView name={{ ios: 'star.fill', android: 'star' } as any} size={13} tintColor="#F59E0B" />
-              <Text style={[styles.actionText, { color: '#92400E' }]}>Rate Driver</Text>
+        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+          {canRate && (
+            <Pressable
+              style={styles.rateBtn}
+              onPress={() => onRate({
+                rideId,
+                driverId:   booking.ride!.driver_id,
+                driverName,
+                route: `${booking.ride?.from_city} → ${booking.ride?.to_city}`,
+              })}>
+              <Text style={styles.rateTxt}>⭐ Rate Trip</Text>
             </Pressable>
           )}
-          {booking.status === 'completed' && booking.rated && (
-            <View style={[styles.actionBtn, { backgroundColor: '#F0FDF4', borderColor: '#10B98140' }]}>
-              <SymbolView name={{ ios: 'checkmark.circle.fill', android: 'check_circle' } as any} size={13} tintColor="#10B981" />
-              <Text style={[styles.actionText, { color: '#10B981' }]}>Rated</Text>
-            </View>
+          {alreadyRated && (
+            <Text style={styles.ratedBadge}>⭐ Rated</Text>
           )}
         </View>
       </View>
+
+      {canCancel && (
+        <Pressable style={styles.cancelBtn} onPress={doCancel}>
+          <Text style={styles.cancelTxt}>🚫  Cancel Booking</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
 
 type Props = { onNavigate: (key: string, payload?: any) => void };
+type Notif = { message: string; color: string; key: number };
 
 export function PassengerBookings({ onNavigate }: Props) {
-  const [tab, setTab] = useState<BookingStatus>('upcoming');
-  const filtered = BOOKINGS.filter((b) => b.status === tab);
+  const { user } = useAuth();
+  const [bookings,        setBookings]        = useState<Booking[]>([]);
+  const [reviewedRideIds, setReviewedRideIds] = useState<Set<string>>(new Set());
+  const [loading,         setLoading]         = useState(true);
+  const [tab,             setTab]             = useState<Tab>('pending');
+  const [notif,           setNotif]           = useState<Notif | null>(null);
+  const [rateTarget,      setRateTarget]      = useState<RateTarget | null>(null);
+
+  // Clear bell badge when passenger opens this tab
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from('bookings')
+      .update({ passenger_seen: true })
+      .eq('passenger_id', user.id)
+      .eq('status', 'accepted')
+      .eq('passenger_seen', false);
+  }, [user]);
+
+  const fetchBookings = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+
+    const [bookingsRes, reviewsRes] = await Promise.all([
+      supabase
+        .from('bookings')
+        .select(`
+          id, seats_requested, status, created_at, message, ride_completed,
+          ride:ride_id(
+            id, from_city, to_city, departure_date, departure_time,
+            price, status, driver_id,
+            driver:driver_id(name)
+          )
+        `)
+        .eq('passenger_id', user.id)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('reviews')
+        .select('ride_id')
+        .eq('passenger_id', user.id),
+    ]);
+
+    setBookings((bookingsRes.data ?? []) as unknown as Booking[]);
+    setReviewedRideIds(new Set((reviewsRes.data ?? []).map(r => r.ride_id)));
+    setLoading(false);
+  }, [user]);
+
+  useEffect(() => { fetchBookings(); }, [fetchBookings]);
+
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel(`bookings:passenger:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'bookings', filter: `passenger_id=eq.${user.id}` },
+        (payload) => {
+          const newStatus = payload.new.status as BookingStatus;
+          const rideCompleted = payload.new.ride_completed === true;
+          setBookings(prev =>
+            prev.map(b => b.id === payload.new.id ? { ...b, status: newStatus, ride_completed: rideCompleted } : b),
+          );
+          if (newStatus === 'accepted' &&
+              (payload.old?.status === 'pending' || payload.new?.passenger_seen === false)) {
+            setNotif({ message: '🎉 Your booking was accepted! Check Confirmed tab.', color: '#10B981', key: Date.now() });
+            setTab('confirmed');
+          } else if (newStatus === 'rejected') {
+            setNotif({ message: '❌ Your booking request was declined by the driver.', color: '#EF4444', key: Date.now() });
+            setTab('history');
+          }
+        },
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user]);
+
+
+  const cancelBooking = async (id: string) => {
+    // Use .select() so Supabase returns the updated row — if RLS blocks it we get an empty array
+    const { data, error } = await supabase
+      .from('bookings')
+      .update({ status: 'cancelled' })
+      .eq('id', id)
+      .eq('passenger_id', user!.id)   // ensures RLS applies for the right passenger
+      .select('id');
+
+    if (error || !data?.length) {
+      setNotif({ message: '❌ Could not cancel booking. Please try again.', color: '#EF4444', key: Date.now() });
+      return;
+    }
+
+    // booked_seats is decremented by the DB trigger (sync_booked_seats) when an accepted booking is cancelled
+    setBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'cancelled' } : b));
+  };
+
+  const handleReviewSubmitted = () => {
+    if (rateTarget) {
+      setReviewedRideIds(prev => new Set([...prev, rateTarget.rideId]));
+    }
+    setRateTarget(null);
+  };
+
+  const pendingList   = bookings.filter(b => b.status === 'pending');
+  const confirmedList = bookings.filter(b => b.status === 'accepted');
+  const historyList   = bookings.filter(b => b.status === 'rejected' || b.status === 'cancelled');
+  const shown = tab === 'pending' ? pendingList : tab === 'confirmed' ? confirmedList : historyList;
 
   return (
-    <ScrollView style={styles.root} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-
-      <Text style={styles.pageTitle}>My Bookings</Text>
-
-      <View style={styles.tabs}>
-        {(['upcoming', 'completed', 'cancelled'] as BookingStatus[]).map((t) => (
-          <Pressable key={t} style={[styles.tabChip, tab === t && { backgroundColor: C }]} onPress={() => setTab(t)}>
-            <Text style={[styles.tabText, tab === t && { color: '#fff' }]}>
-              {t.charAt(0).toUpperCase() + t.slice(1)}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-
-      {filtered.length === 0 ? (
-        <View style={styles.empty}>
-          <SymbolView name={{ ios: 'ticket.fill', android: 'confirmation_number' } as any} size={52} tintColor="#CBD5E1" />
-          <Text style={styles.emptyTitle}>No {tab} bookings</Text>
-          {tab === 'upcoming' && (
-            <Pressable style={[styles.emptyBtn, { backgroundColor: C }]} onPress={() => onNavigate('search')}>
-              <Text style={styles.emptyBtnText}>Find a Ride</Text>
-            </Pressable>
-          )}
-        </View>
-      ) : (
-        filtered.map((b) => <BookingCard key={b.id} booking={b} />)
+    <View style={{ flex: 1 }}>
+      {rateTarget && (
+        <RateModal
+          visible
+          rideId={rateTarget.rideId}
+          driverId={rateTarget.driverId}
+          driverName={rateTarget.driverName}
+          route={rateTarget.route}
+          onClose={() => setRateTarget(null)}
+          onSubmitted={handleReviewSubmitted}
+        />
       )}
 
-    </ScrollView>
+      {notif && (
+        <NotifBanner key={notif.key} message={notif.message} color={notif.color} onDone={() => setNotif(null)} />
+      )}
+
+      <ScrollView style={styles.root} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+
+        <Text style={styles.pageTitle}>My Bookings</Text>
+
+        <View style={styles.tabs}>
+          <Pressable style={[styles.tabChip, tab === 'pending'   && { backgroundColor: '#D97706' }]} onPress={() => setTab('pending')}>
+            <Text style={[styles.tabTxt, tab === 'pending'   && { color: '#fff' }]}>
+              ⏳ Pending{pendingList.length > 0 ? ` (${pendingList.length})` : ''}
+            </Text>
+          </Pressable>
+          <Pressable style={[styles.tabChip, tab === 'confirmed' && { backgroundColor: '#10B981' }]} onPress={() => setTab('confirmed')}>
+            <Text style={[styles.tabTxt, tab === 'confirmed' && { color: '#fff' }]}>
+              ✅ Confirmed{confirmedList.length > 0 ? ` (${confirmedList.length})` : ''}
+            </Text>
+          </Pressable>
+          <Pressable style={[styles.tabChip, tab === 'history'   && { backgroundColor: '#64748B' }]} onPress={() => setTab('history')}>
+            <Text style={[styles.tabTxt, tab === 'history'   && { color: '#fff' }]}>History</Text>
+          </Pressable>
+        </View>
+
+        {loading ? (
+          <View style={styles.empty}><Text style={styles.emptyTxt}>Loading…</Text></View>
+        ) : shown.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={{ fontSize: 48 }}>
+              {tab === 'pending' ? '⏳' : tab === 'confirmed' ? '🎫' : '📋'}
+            </Text>
+            <Text style={styles.emptyTxt}>
+              {tab === 'pending'   ? 'No pending requests'   :
+               tab === 'confirmed' ? 'No confirmed bookings' : 'No history yet'}
+            </Text>
+            {tab === 'pending' && (
+              <Pressable style={[styles.emptyBtn, { backgroundColor: C }]} onPress={() => onNavigate('search')}>
+                <Text style={styles.emptyBtnTxt}>Find a Ride</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : (
+          shown.map(b => (
+            <BookingCard
+              key={b.id}
+              booking={b}
+              reviewedRideIds={reviewedRideIds}
+              onCancel={cancelBooking}
+              onRate={setRateTarget}
+            />
+          ))
+        )}
+
+      </ScrollView>
+    </View>
   );
 }
 
@@ -168,41 +357,70 @@ const styles = StyleSheet.create({
   content: { padding: 20, gap: 16, paddingBottom: 32 },
   pageTitle: { fontSize: 24, fontWeight: '800', color: '#1E293B', letterSpacing: -0.5 },
 
-  tabs: { flexDirection: 'row', gap: 8 },
-  tabChip: { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 20, backgroundColor: '#F1F5F9' },
-  tabText: { fontSize: 13, fontWeight: '600', color: '#64748B' },
+  banner: {
+    position: 'absolute', top: 0, left: 0, right: 0, zIndex: 99,
+    paddingVertical: 14, paddingHorizontal: 20,
+  },
+  bannerTxt: { color: '#fff', fontSize: 14, fontWeight: '700', textAlign: 'center' },
+
+  tabs: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  tabChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: '#F1F5F9' },
+  tabTxt:  { fontSize: 13, fontWeight: '600', color: '#64748B' },
 
   card: {
     backgroundColor: '#fff', borderRadius: 16, padding: 16, gap: 12,
     shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 6, elevation: 2,
   },
-  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  route: { fontSize: 16, fontWeight: '700', color: '#1E293B' },
-  dateLine: { fontSize: 13, color: '#64748B', marginTop: 2 },
+  cardTop:  { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  route:    { fontSize: 16, fontWeight: '700', color: '#1E293B' },
+  dateLine: { fontSize: 13, color: '#64748B', marginTop: 3 },
   statusPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  statusText: { fontSize: 12, fontWeight: '700' },
-  divider: { height: 1, backgroundColor: '#F1F5F9' },
+  statusTxt:  { fontSize: 12, fontWeight: '700' },
+  divider:    { height: 1, backgroundColor: '#F1F5F9' },
 
   driverRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  driverAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  driverInitial: { fontSize: 14, fontWeight: '800' },
-  driverName: { fontSize: 14, fontWeight: '600', color: '#1E293B' },
-  carText: { fontSize: 12, color: '#94A3B8', marginTop: 1 },
-  ratingBadge: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  ratingText: { fontSize: 12, fontWeight: '600', color: '#64748B' },
+  driverAvatar: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: C + '15', alignItems: 'center', justifyContent: 'center',
+  },
+  driverInitial: { fontSize: 15, fontWeight: '800', color: C },
+  driverName:    { fontSize: 14, fontWeight: '600', color: '#1E293B' },
 
   cardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  priceLabel: { fontSize: 11, color: '#94A3B8', fontWeight: '500' },
-  price: { fontSize: 18, fontWeight: '800' },
-  footerActions: { flexDirection: 'row', gap: 8 },
-  actionBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, borderWidth: 1,
-  },
-  actionText: { fontSize: 12, fontWeight: '600' },
+  seatsLbl:   { fontSize: 11, color: '#94A3B8' },
+  price:      { fontSize: 18, fontWeight: '800' },
 
-  empty: { alignItems: 'center', paddingVertical: 56, gap: 12 },
-  emptyTitle: { fontSize: 16, color: '#94A3B8', fontWeight: '500' },
-  emptyBtn: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 },
-  emptyBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  rateBtn: {
+    paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
+    backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FCD34D',
+  },
+  rateTxt: { fontSize: 13, fontWeight: '700', color: '#D97706' },
+
+  ratedBadge: { fontSize: 13, color: '#94A3B8', fontWeight: '500' },
+
+  msgBubble: {
+    backgroundColor: '#EFF6FF', borderRadius: 12, padding: 10,
+    borderLeftWidth: 3, borderLeftColor: C,
+    gap: 2,
+  },
+  msgLabel: { fontSize: 10, fontWeight: '700', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.4 },
+  msgText:  { fontSize: 13, color: '#1E293B', fontStyle: 'italic' },
+
+  acceptedBanner: {
+    backgroundColor: '#F0FDF4', borderRadius: 10, padding: 10,
+    borderWidth: 1, borderColor: '#BBF7D0', alignItems: 'center',
+  },
+  acceptedTxt: { fontSize: 13, fontWeight: '700', color: '#10B981' },
+
+  cancelBtn: {
+    paddingVertical: 11, borderRadius: 12,
+    backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA',
+    alignItems: 'center',
+  },
+  cancelTxt: { fontSize: 14, fontWeight: '700', color: '#EF4444' },
+
+  empty:      { alignItems: 'center', paddingVertical: 56, gap: 12 },
+  emptyTxt:   { fontSize: 16, color: '#94A3B8', fontWeight: '500' },
+  emptyBtn:   { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 },
+  emptyBtnTxt:{ color: '#fff', fontSize: 14, fontWeight: '700' },
 });

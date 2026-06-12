@@ -1,7 +1,9 @@
 import { SymbolView } from 'expo-symbols';
-import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { useAuth } from '@/context/auth';
+import { supabase } from '@/lib/supabase';
 import { RideItem } from '../passenger-dashboard';
 
 const C = '#3B82F6';
@@ -30,26 +32,51 @@ function Stars({ value, size = 14 }: { value: number; size?: number }) {
 type Props = { ride: RideItem; onBack: () => void; onNavigate: (key: string, payload?: any) => void };
 
 export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
-  const [seats, setSeats] = useState(1);
+  const { user }    = useAuth();
+  const [seats,     setSeats]   = useState(1);
+  const [message,   setMessage] = useState('');
+  const [loading,   setLoading] = useState(false);
+  const [bookError, setBookError] = useState<string | null>(null);
+  const [booked,    setBooked]   = useState(false);
   const available = ride.seats - ride.bookedSeats;
 
-  const book = () => {
-    if (available === 0) { Alert.alert('No seats available', 'This ride is full.'); return; }
-    Alert.alert(
-      'Confirm Booking',
-      `${ride.from} → ${ride.to}\n${ride.date} at ${ride.time}\n${seats} seat${seats > 1 ? 's' : ''} × ${ride.price} MAD = ${seats * ride.price} MAD`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Book Now', onPress: () => {
-            Alert.alert('Booking Confirmed! 🎉', 'Your seat has been reserved. Check My Bookings for details.', [
-              { text: 'My Bookings', onPress: () => onNavigate('bookings') },
-              { text: 'OK' },
-            ]);
-          },
-        },
-      ],
-    );
+  // Check if passenger already has an active booking for this ride
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from('bookings')
+      .select('id')
+      .eq('ride_id', ride.id)
+      .eq('passenger_id', user.id)
+      .in('status', ['pending', 'accepted'])
+      .maybeSingle()
+      .then(({ data }) => { if (data) setBooked(true); });
+  }, [ride.id, user]);
+
+  const book = async () => {
+    if (!user) { setBookError('You must be logged in to book.'); return; }
+    if (available === 0) { setBookError('This ride is full.'); return; }
+
+    const confirmed = Platform.OS === 'web'
+      ? window.confirm(`Book ${seats} seat${seats > 1 ? 's' : ''} on ${ride.from} → ${ride.to} for ${seats * ride.price} MAD?`)
+      : true; // native uses inline confirm below
+
+    if (!confirmed) return;
+
+    setLoading(true);
+    setBookError(null);
+    const { error } = await supabase.from('bookings').insert({
+      ride_id:         ride.id,
+      passenger_id:    user.id,
+      seats_requested: seats,
+      total_price:     seats * ride.price,
+      status:          'pending',
+      message:         message.trim() || null,
+    });
+    setLoading(false);
+
+    if (error) { setBookError(error.message); return; }
+    setBooked(true);
   };
 
   return (
@@ -96,10 +123,6 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
               </View>
               <Text style={styles.driverMember}>Member since {ride.driver.memberSince}</Text>
             </View>
-            <Pressable style={[styles.msgBtn, { borderColor: C + '40' }]} onPress={() => onNavigate('messages')}>
-              <SymbolView name={{ ios: 'message.fill', android: 'chat' } as any} size={14} tintColor={C} />
-              <Text style={[styles.msgBtnText, { color: C }]}>Message</Text>
-            </Pressable>
           </View>
           {ride.driver.bio ? (
             <View style={styles.bioBubble}>
@@ -184,6 +207,23 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
           ))}
         </View>
 
+        {/* Message to driver */}
+        {!booked && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Message to driver (optional)</Text>
+            <TextInput
+              style={styles.msgInput}
+              value={message}
+              onChangeText={setMessage}
+              placeholder="e.g. I'll be at the main entrance with luggage."
+              placeholderTextColor="#94A3B8"
+              multiline
+              numberOfLines={3}
+              maxLength={300}
+            />
+          </View>
+        )}
+
         <View style={{ height: 100 }} />
       </ScrollView>
 
@@ -203,11 +243,27 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
         </View>
         <View style={styles.bookRight}>
           <Text style={styles.totalPrice}>{seats * ride.price} MAD</Text>
-          <Pressable style={[styles.bookBtn, { backgroundColor: available > 0 ? C : '#CBD5E1' }]} onPress={book}>
-            <Text style={styles.bookBtnText}>{available > 0 ? 'Book Now' : 'Full'}</Text>
-          </Pressable>
+          {booked ? (
+            <Pressable style={[styles.bookBtn, { backgroundColor: C }]} onPress={() => onNavigate('bookings')}>
+              <Text style={styles.bookBtnText}>✓ View Booking</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              style={[styles.bookBtn, { backgroundColor: available > 0 && !loading ? C : '#CBD5E1' }]}
+              onPress={book}
+              disabled={available === 0 || loading}>
+              <Text style={styles.bookBtnText}>
+                {loading ? 'Booking…' : available > 0 ? 'Book Now' : 'Full'}
+              </Text>
+            </Pressable>
+          )}
         </View>
       </View>
+      {bookError && (
+        <View style={styles.bookError}>
+          <Text style={styles.bookErrorTxt}>{bookError}</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -239,8 +295,6 @@ const styles = StyleSheet.create({
   driverName: { fontSize: 16, fontWeight: '700', color: '#1E293B' },
   driverRating: { fontSize: 12, color: '#64748B' },
   driverMember: { fontSize: 12, color: '#94A3B8' },
-  msgBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, borderWidth: 1 },
-  msgBtnText: { fontSize: 12, fontWeight: '600' },
   bioBubble: { backgroundColor: '#F8FAFC', borderRadius: 12, padding: 12, borderLeftWidth: 3, borderLeftColor: C },
   bioText: { fontSize: 13, color: '#475569', fontStyle: 'italic', lineHeight: 18 },
 
@@ -287,4 +341,12 @@ const styles = StyleSheet.create({
   totalPrice: { fontSize: 22, fontWeight: '800', color: '#1E293B' },
   bookBtn: { paddingHorizontal: 28, paddingVertical: 14, borderRadius: 14 },
   bookBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  bookError: { backgroundColor: '#FEF2F2', paddingHorizontal: 16, paddingVertical: 10 },
+  bookErrorTxt: { color: '#EF4444', fontSize: 13, fontWeight: '500' },
+
+  msgInput: {
+    backgroundColor: '#F8FAFC', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
+    borderWidth: 1, borderColor: '#E2E8F0', fontSize: 14, color: '#1E293B',
+    minHeight: 80, textAlignVertical: 'top',
+  },
 });

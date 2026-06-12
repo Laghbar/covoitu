@@ -1,28 +1,26 @@
-import { SymbolView } from 'expo-symbols';
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
+import { supabase } from '@/lib/supabase';
 import { PassengerHome }      from './passenger/home';
 import { PassengerSearch }    from './passenger/search';
 import { PassengerRideDetail } from './passenger/ride-detail';
 import { PassengerBookings }  from './passenger/bookings';
 import { PassengerPayments }  from './passenger/payments';
-import { PassengerMessages }  from './passenger/messages';
 import { PassengerProfile }   from './passenger/profile';
 
 export const PASSENGER_COLOR = '#3B82F6';
 
-type TabKey = 'home' | 'search' | 'bookings' | 'payments' | 'messages' | 'profile';
+type TabKey = 'home' | 'search' | 'bookings' | 'payments' | 'profile';
 
-const TABS: { key: TabKey; label: string; icon: { ios: string; android: string } }[] = [
-  { key: 'home',     label: 'Home',      icon: { ios: 'house.fill',              android: 'home' } },
-  { key: 'search',   label: 'Search',    icon: { ios: 'magnifyingglass',         android: 'search' } },
-  { key: 'bookings', label: 'Bookings',  icon: { ios: 'ticket.fill',             android: 'confirmation_number' } },
-  { key: 'payments', label: 'Payments',  icon: { ios: 'creditcard.fill',         android: 'credit_card' } },
-  { key: 'messages', label: 'Messages',  icon: { ios: 'message.fill',            android: 'chat' } },
-  { key: 'profile',  label: 'Profile',   icon: { ios: 'person.fill',             android: 'person' } },
+const TABS: { key: TabKey; emoji: string; label: string }[] = [
+  { key: 'home',     emoji: '🏠', label: 'Home'     },
+  { key: 'search',   emoji: '🔍', label: 'Search'   },
+  { key: 'bookings', emoji: '🎫', label: 'Bookings' },
+  { key: 'payments', emoji: '💳', label: 'Payments' },
+  { key: 'profile',  emoji: '👤', label: 'Profile'  },
 ];
 
 export type RideItem = {
@@ -33,54 +31,207 @@ export type RideItem = {
   preferences: string[]; pickupPoint: string; dropoffPoint: string; note?: string;
 };
 
-function TopNavBar({ active, onChange }: { active: TabKey; onChange: (k: TabKey) => void }) {
+function AppBar({
+  notifCount,
+  onBellPress,
+  onAvatarPress,
+}: {
+  notifCount: number;
+  onBellPress: () => void;
+  onAvatarPress: () => void;
+}) {
   const { user } = useAuth();
-  const initial = (user?.name?.[0] ?? 'P').toUpperCase();
+  const initial  = (user?.name?.[0] ?? 'P').toUpperCase();
 
   return (
-    <View style={styles.navContainer}>
-      <View style={styles.appBar}>
-        <View style={styles.appBarLeft}>
-          <View style={[styles.appLogo, { backgroundColor: PASSENGER_COLOR }]}>
-            <SymbolView name={{ ios: 'car.fill', android: 'directions_car' } as any} size={14} tintColor="#fff" />
-          </View>
-          <Text style={styles.appName}>Harizana</Text>
-          <View style={[styles.rolePill, { backgroundColor: PASSENGER_COLOR + '18' }]}>
-            <Text style={[styles.roleText, { color: PASSENGER_COLOR }]}>Passenger</Text>
-          </View>
+    <View style={styles.appBar}>
+      {/* Left: logo + name + role */}
+      <View style={styles.appBarLeft}>
+        <View style={[styles.appLogo, { backgroundColor: PASSENGER_COLOR }]}>
+          <Text style={{ fontSize: 12 }}>🚌</Text>
         </View>
-        <Pressable onPress={() => onChange('profile')} style={[styles.avatarBtn, { backgroundColor: PASSENGER_COLOR }]}>
+        <Text style={styles.appName}>Harizana</Text>
+        <View style={[styles.rolePill, { backgroundColor: PASSENGER_COLOR + '18' }]}>
+          <Text style={[styles.roleText, { color: PASSENGER_COLOR }]}>Passenger</Text>
+        </View>
+      </View>
+
+      {/* Right: bell + avatar */}
+      <View style={styles.appBarRight}>
+        <Pressable style={styles.bellWrap} onPress={onBellPress}>
+          <Text style={styles.bellIcon}>🔔</Text>
+          {notifCount > 0 && (
+            <View style={styles.bellBadge}>
+              <Text style={styles.bellBadgeText}>{notifCount > 9 ? '9+' : notifCount}</Text>
+            </View>
+          )}
+        </Pressable>
+        <Pressable onPress={onAvatarPress} style={[styles.avatarBtn, { backgroundColor: PASSENGER_COLOR }]}>
           <Text style={styles.avatarText}>{initial}</Text>
         </Pressable>
       </View>
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabStrip}>
-        {TABS.map((tab) => {
-          const focused = tab.key === active;
-          return (
-            <Pressable key={tab.key} style={styles.tabItem} onPress={() => onChange(tab.key)}>
-              <SymbolView
-                name={tab.icon as any}
-                size={18}
-                tintColor={focused ? PASSENGER_COLOR : '#94A3B8'}
-              />
-              <Text style={[styles.tabLabel, focused && { color: PASSENGER_COLOR, fontWeight: '700' }]}>
-                {tab.label}
-              </Text>
-              {focused && <View style={[styles.activeBar, { backgroundColor: PASSENGER_COLOR }]} />}
-            </Pressable>
-          );
-        })}
-      </ScrollView>
     </View>
   );
 }
 
+function BottomTabBar({
+  active,
+  onChange,
+  bookingCount,
+}: {
+  active: TabKey;
+  onChange: (k: TabKey) => void;
+  bookingCount: number;
+}) {
+  return (
+    <View style={styles.tabBar}>
+      {TABS.map(tab => {
+        const focused  = tab.key === active;
+        const hasBadge = tab.key === 'bookings' && bookingCount > 0;
+        return (
+          <Pressable
+            key={tab.key}
+            style={styles.tabItem}
+            onPress={() => onChange(tab.key)}>
+            {focused && <View style={[styles.tabActiveBar, { backgroundColor: PASSENGER_COLOR }]} />}
+            <View style={styles.tabIconWrap}>
+              <Text style={[styles.tabEmoji, focused && styles.tabEmojiActive]}>{tab.emoji}</Text>
+              {hasBadge && (
+                <View style={styles.tabBadge}>
+                  <Text style={styles.tabBadgeText}>{bookingCount > 9 ? '9+' : bookingCount}</Text>
+                </View>
+              )}
+            </View>
+            <Text style={[styles.tabLabel, focused && { color: PASSENGER_COLOR, fontWeight: '700' }]}>
+              {tab.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function AcceptToast({ message, onPress, onDone }: { message: string; onPress: () => void; onDone: () => void }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(-20)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacity,     { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.timing(translateY,  { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]).start();
+
+    const timer = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(opacity,    { toValue: 0, duration: 400, useNativeDriver: true }),
+        Animated.timing(translateY, { toValue: -20, duration: 400, useNativeDriver: true }),
+      ]).start(onDone);
+    }, 4500);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  return (
+    <Animated.View style={[toastStyles.wrap, { opacity, transform: [{ translateY }] }]}>
+      <Pressable style={toastStyles.inner} onPress={onPress}>
+        <Text style={toastStyles.icon}>🎉</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={toastStyles.title}>Booking Accepted!</Text>
+          <Text style={toastStyles.body}>{message}</Text>
+        </View>
+        <Text style={toastStyles.action}>View →</Text>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+const toastStyles = StyleSheet.create({
+  wrap: {
+    position: 'absolute', top: 8, left: 16, right: 16, zIndex: 999,
+    borderRadius: 16,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18, shadowRadius: 12, elevation: 10,
+  },
+  inner: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#fff', borderRadius: 16,
+    padding: 14, borderLeftWidth: 4, borderLeftColor: '#10B981',
+  },
+  icon:   { fontSize: 28 },
+  title:  { fontSize: 14, fontWeight: '800', color: '#1E293B' },
+  body:   { fontSize: 12, color: '#64748B', marginTop: 1 },
+  action: { fontSize: 13, fontWeight: '700', color: '#10B981' },
+});
+
 export default function PassengerDashboard() {
-  const [tab, setTab]             = useState<TabKey>('home');
+  const { user } = useAuth();
+  const insets   = useSafeAreaInsets();
+  const [tab,          setTab]          = useState<TabKey>('home');
   const [selectedRide, setSelectedRide] = useState<RideItem | null>(null);
-  const [searchQuery, setSearchQuery]   = useState<{ from: string; to: string; date: string; seats: string } | null>(null);
-  const insets = useSafeAreaInsets();
+  const [searchQuery,  setSearchQuery]  = useState<{ from: string; to: string; date: string; seats: string } | null>(null);
+  const [notifCount,   setNotifCount]   = useState(0);
+  const [toast,        setToast]        = useState<{ msg: string; key: number } | null>(null);
+
+  const tabRef = useRef(tab);
+  useEffect(() => { tabRef.current = tab; }, [tab]);
+
+  const fetchNotifCount = useCallback(async () => {
+    if (!user) return;
+    const { count } = await supabase
+      .from('bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('passenger_id', user.id)
+      .eq('status', 'accepted')
+      .eq('passenger_seen', false);
+    // Don't restore the badge if the user is already on the bookings tab
+    if (tabRef.current !== 'bookings') {
+      setNotifCount(count ?? 0);
+    }
+  }, [user]);
+
+  useEffect(() => { fetchNotifCount(); }, [fetchNotifCount]);
+
+  // Realtime: update bell badge and show toast when driver accepts
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel('passenger-bookings-badge')
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'bookings',
+        filter: `passenger_id=eq.${user.id}`,
+      }, async (payload) => {
+        const justAccepted = payload.new?.status === 'accepted' &&
+          (payload.old?.status === 'pending' || payload.new?.passenger_seen === false);
+
+        if (justAccepted) {
+          setToast({ msg: 'Your booking request was accepted by the driver.', key: Date.now() });
+          // Mark as seen immediately so the bell badge stays at 0
+          await supabase
+            .from('bookings')
+            .update({ passenger_seen: true })
+            .eq('id', payload.new.id)
+            .eq('passenger_id', user.id);
+          // Refresh count — will be 0 now
+          fetchNotifCount();
+        } else {
+          fetchNotifCount();
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user, fetchNotifCount]);
+
+  const markNotifsSeen = useCallback(() => {
+    if (!user) return;
+    setNotifCount(0);
+    supabase
+      .from('bookings')
+      .update({ passenger_seen: true })
+      .eq('passenger_id', user.id)
+      .eq('status', 'accepted')
+      .eq('passenger_seen', false);
+  }, [user]);
 
   const navigate = (key: string, payload?: any) => {
     if (key === 'ride-detail') { setSelectedRide(payload); return; }
@@ -89,12 +240,34 @@ export default function PassengerDashboard() {
     setTab(key as TabKey);
   };
 
+  const changeTab = (k: TabKey) => {
+    setSelectedRide(null);
+    setTab(k);
+    if (k === 'bookings') markNotifsSeen();
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
-      <View style={{ paddingTop: insets.top }}>
-        <TopNavBar active={tab} onChange={(k) => { setSelectedRide(null); setTab(k); }} />
+      {/* Top app bar */}
+      <View style={[styles.topSafe, { paddingTop: insets.top }]}>
+        <AppBar
+          notifCount={notifCount}
+          onBellPress={() => changeTab('bookings')}
+          onAvatarPress={() => changeTab('profile')}
+        />
       </View>
 
+      {/* Acceptance toast — floats over content, auto-dismisses */}
+      {toast && (
+        <AcceptToast
+          key={toast.key}
+          message={toast.msg}
+          onPress={() => { setToast(null); changeTab('bookings'); }}
+          onDone={() => setToast(null)}
+        />
+      )}
+
+      {/* Page content */}
       <View style={{ flex: 1 }}>
         {selectedRide ? (
           <PassengerRideDetail ride={selectedRide} onBack={() => setSelectedRide(null)} onNavigate={navigate} />
@@ -104,31 +277,85 @@ export default function PassengerDashboard() {
             {tab === 'search'   && <PassengerSearch   onNavigate={navigate} initialQuery={searchQuery} />}
             {tab === 'bookings' && <PassengerBookings onNavigate={navigate} />}
             {tab === 'payments' && <PassengerPayments />}
-            {tab === 'messages' && <PassengerMessages />}
             {tab === 'profile'  && <PassengerProfile  />}
           </>
         )}
       </View>
+
+      {/* Bottom tab bar — hidden when viewing ride detail */}
+      {!selectedRide && (
+        <View style={{ paddingBottom: insets.bottom, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0' }}>
+          <BottomTabBar active={tab} onChange={changeTab} bookingCount={notifCount} />
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  navContainer: { backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
-  appBar: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingVertical: 10,
+  topSafe: {
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
-  appBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  appLogo: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  appName: { fontSize: 17, fontWeight: '800', color: '#1E293B', letterSpacing: -0.3 },
+
+  appBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  appBarLeft:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  appBarRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  appLogo: {
+    width: 28, height: 28, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  appName:  { fontSize: 17, fontWeight: '800', color: '#1E293B', letterSpacing: -0.3 },
   rolePill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   roleText: { fontSize: 11, fontWeight: '700' },
-  avatarBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+
+  bellWrap: { position: 'relative', padding: 4 },
+  bellIcon: { fontSize: 20 },
+  bellBadge: {
+    position: 'absolute', top: 0, right: 0,
+    minWidth: 16, height: 16, borderRadius: 8,
+    backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 3, borderWidth: 1.5, borderColor: '#fff',
+  },
+  bellBadgeText: { fontSize: 9, fontWeight: '900', color: '#fff' },
+
+  avatarBtn:  { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontSize: 14, fontWeight: '700' },
 
-  tabStrip: { paddingHorizontal: 8 },
-  tabItem: { alignItems: 'center', paddingHorizontal: 12, paddingTop: 4, paddingBottom: 0, gap: 4, minWidth: 72 },
-  tabLabel: { fontSize: 11, color: '#94A3B8', fontWeight: '500' },
-  activeBar: { height: 3, width: '100%', borderTopLeftRadius: 2, borderTopRightRadius: 2 },
+  /* Bottom tab bar */
+  tabBar: {
+    flexDirection: 'row',
+    paddingTop: 6,
+    paddingBottom: Platform.OS === 'ios' ? 0 : 6,
+  },
+  tabItem: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+    paddingVertical: 4,
+    position: 'relative',
+  },
+  tabActiveBar: {
+    position: 'absolute',
+    top: 0, left: '20%', right: '20%',
+    height: 3, borderRadius: 2,
+  },
+  tabIconWrap: { position: 'relative' },
+  tabEmoji:       { fontSize: 22, opacity: 0.4 },
+  tabEmojiActive: { opacity: 1 },
+  tabBadge: {
+    position: 'absolute', top: -4, right: -6,
+    minWidth: 15, height: 15, borderRadius: 8,
+    backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 2, borderWidth: 1.5, borderColor: '#fff',
+  },
+  tabBadgeText: { fontSize: 8, fontWeight: '900', color: '#fff' },
+  tabLabel: { fontSize: 10, color: '#94A3B8', fontWeight: '500' },
 });

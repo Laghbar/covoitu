@@ -1,51 +1,190 @@
-import { SymbolView } from 'expo-symbols';
-import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import * as Location from 'expo-location';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { RideItem } from '../passenger-dashboard';
-import { FEATURED_RIDES } from './home';
+import { useAuth } from '@/context/auth';
+import { supabase } from '@/lib/supabase';
 
 const C = '#3B82F6';
 
-const ALL_RIDES: RideItem[] = [
-  ...FEATURED_RIDES,
-  {
-    id: '4', from: 'Rabat', to: 'Fès', date: '2026-06-17', time: '06:30',
-    price: 80, seats: 4, bookedSeats: 2,
-    driver: { name: 'Youssef Tazi', initial: 'Y', rating: 4.6, trips: 55, memberSince: '2023', bio: 'Regular Rabat-Fès driver. Comfortable and on time.' },
-    car: { make: 'Hyundai', model: 'i20', year: '2019', color: 'Blue', plate: '11223 D 4' },
-    preferences: ['Luggage', 'No Smoke'],
-    pickupPoint: 'Agdal, Rabat', dropoffPoint: 'Centre-ville, Fès',
-  },
-  {
-    id: '5', from: 'Tanger', to: 'Casablanca', date: '2026-06-18', time: '10:00',
-    price: 130, seats: 3, bookedSeats: 0,
-    driver: { name: 'Nadia El Fassi', initial: 'N', rating: 4.9, trips: 310, memberSince: '2021', bio: 'Top-rated driver on Harizana. Very experienced on long routes.' },
-    car: { make: 'Toyota', model: 'Yaris', year: '2023', color: 'Silver', plate: '33445 E 5' },
-    preferences: ['A/C', 'Music', 'Chatty'],
-    pickupPoint: 'Port de Tanger', dropoffPoint: 'Maarif, Casablanca',
-    note: 'Stop in Larache for 15 min.',
-  },
-  {
-    id: '6', from: 'Agadir', to: 'Marrakech', date: '2026-06-19', time: '08:00',
-    price: 95, seats: 2, bookedSeats: 1,
-    driver: { name: 'Hassan Ouaziz', initial: 'H', rating: 4.5, trips: 39, memberSince: '2024', bio: 'New but reliable driver. I keep my car clean and drive safely.' },
-    car: { make: 'Peugeot', model: '208', year: '2021', color: 'Red', plate: '77889 F 6' },
-    preferences: ['No Smoke', 'Pets OK'],
-    pickupPoint: 'Talborjt, Agadir', dropoffPoint: 'Hivernage, Marrakech',
-  },
+const CITIES = [
+  'Agadir','Aït Melloul','Al Hoceïma','Azilal','Azrou',
+  'Béni Mellal','Benslimane','Berrechid','Bouskoura',
+  'Casablanca','Chefchaouen',
+  'Dakhla',
+  'El Jadida','El Kelâa des Sraghna','Errachidia','Essaouira',
+  'Fès','Fkih Ben Salah',
+  'Guelmim',
+  'Ifrane','Inzegane',
+  'Kénitra','Khemisset','Khouribga','Ksar el-Kébir',
+  'Laâyoune','Larache',
+  'Marrakech','Meknès','Midelt','Mohammedia',
+  'Nador',
+  'Ouarzazate','Ouazzane','Oujda',
+  'Rabat',
+  'Safi','Salé','Settat','Sidi Bennour','Sidi Ifni','Sidi Slimane','Skhirate',
+  'Tanger','Taroudant','Taza','Tétouan','Tiznit',
+  'Zagora',
 ];
+
+function toRideItem(r: any): RideItem {
+  // Calculate from accepted bookings (source of truth) rather than the cached column
+  const bookedSeats = Array.isArray(r.bookings)
+    ? r.bookings
+        .filter((b: any) => b.status === 'accepted')
+        .reduce((s: number, b: any) => s + (b.seats_requested ?? 0), 0)
+    : (r.booked_seats ?? 0);
+
+  return {
+    id: r.id,
+    from: r.from_city,
+    to: r.to_city,
+    date: r.departure_date,
+    time: r.departure_time,
+    price: r.price,
+    seats: r.seats,
+    bookedSeats,
+    driver: {
+      name: r.driver?.name ?? 'Driver',
+      initial: (r.driver?.name?.[0] ?? 'D').toUpperCase(),
+      rating: 4.8, trips: 0, memberSince: '2024', bio: r.note ?? '',
+    },
+    car: { make: '', model: '', year: '', color: '', plate: '' },
+    preferences: Array.isArray(r.preferences) ? r.preferences : [],
+    pickupPoint: r.pickup_point ?? '',
+    dropoffPoint: r.dropoff_point ?? '',
+    note: r.note ?? undefined,
+  };
+}
 
 const SORT_OPTIONS = ['Cheapest', 'Fastest', 'Best rated', 'Most seats'];
 
-type Props = {
-  onNavigate: (key: string, payload?: any) => void;
-  initialQuery?: { from: string; to: string; date: string; seats: string } | null;
-};
+// ─── City autocomplete (free text + suggestions) ──────────────────────────────
+function CityPicker({
+  value, onSelect, placeholder, emoji,
+}: { value: string; onSelect: (c: string) => void; placeholder: string; emoji: string }) {
+  const [focused,   setFocused]   = useState(false);
+  const [inputText, setInputText] = useState(value);
+  const selecting = useRef(false);
 
-function RideCard({ ride, onPress }: { ride: RideItem; onPress: () => void }) {
+  // Sync display when parent clears or swaps the value
+  useEffect(() => { setInputText(value); }, [value]);
+
+  const suggestions  = inputText.length >= 1
+    ? CITIES.filter(c => c.toLowerCase().includes(inputText.toLowerCase())).slice(0, 7)
+    : [];
+  const showDropdown = focused && suggestions.length > 0;
+
+  return (
+    <View style={{ zIndex: showDropdown ? 200 : 1 }}>
+      <View style={styles.cityBtn}>
+        <Text style={{ fontSize: 15 }}>{emoji}</Text>
+        <TextInput
+          style={[styles.cityBtnText, { flex: 1, padding: 0 }]}
+          value={inputText}
+          onChangeText={(t) => { setInputText(t); onSelect(t); }}
+          placeholder={placeholder}
+          placeholderTextColor="#94A3B8"
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            if (selecting.current) return;
+            setTimeout(() => setFocused(false), 150);
+          }}
+        />
+        {inputText.length > 0 && (
+          <Pressable onPress={() => { setInputText(''); onSelect(''); }}>
+            <Text style={{ color: '#CBD5E1', fontSize: 16, paddingHorizontal: 4 }}>✕</Text>
+          </Pressable>
+        )}
+      </View>
+
+      {showDropdown && (
+        <View
+          style={styles.dropdown}
+          // Prevent mousedown from blurring the TextInput on web
+          {...(Platform.OS === 'web' ? { onMouseDown: (e: any) => e.preventDefault() } : {})}
+        >
+          <ScrollView style={{ maxHeight: 220 }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+            {suggestions.map(c => (
+              <Pressable
+                key={c}
+                style={[styles.dropdownItem, c === inputText && { backgroundColor: C + '10' }]}
+                onPress={() => { setInputText(c); onSelect(c); setFocused(false); }}>
+                <Text style={[styles.dropdownItemText, c === inputText && { color: C, fontWeight: '700' }]}>
+                  {c}
+                </Text>
+                {c === inputText && <Text style={{ color: C }}>✓</Text>}
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ─── Date field ───────────────────────────────────────────────────────────────
+function DateField({ value, onChange }: { value: string; onChange: (iso: string) => void }) {
+  const [show,  setShow]  = useState(false);
+  const dateObj = value ? new Date(value + 'T12:00:00') : new Date();
+  const today   = new Date().toISOString().split('T')[0];
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.dateBtn}>
+        <Text>📅</Text>
+        {/* @ts-ignore */}
+        <input
+          type="date" value={value || ''} min={today}
+          onChange={(e: any) => onChange(e.target.value)}
+          style={{
+            flex: 1, border: 'none', background: 'transparent',
+            fontSize: 14, color: value ? '#1E293B' : '#94A3B8',
+            outline: 'none', cursor: 'pointer', minWidth: 0,
+          }}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <View>
+      <Pressable style={styles.dateBtn} onPress={() => setShow(true)}>
+        <Text>📅</Text>
+        <Text style={[styles.dateBtnText, value ? { color: '#1E293B', fontWeight: '600' } : {}]}>
+          {value || 'Pick a date'}
+        </Text>
+        <Text style={{ color: '#94A3B8', fontSize: 12 }}>▼</Text>
+      </Pressable>
+      {show && (
+        <DateTimePicker
+          value={dateObj} mode="date"
+          display={Platform.OS === 'ios' ? 'inline' : 'default'}
+          minimumDate={new Date()}
+          onChange={(_e, d) => {
+            if (Platform.OS !== 'ios') setShow(false);
+            if (d) onChange(d.toISOString().split('T')[0]);
+          }}
+          themeVariant="light"
+        />
+      )}
+      {Platform.OS === 'ios' && show && (
+        <Pressable style={[styles.doneBtn, { backgroundColor: C }]} onPress={() => setShow(false)}>
+          <Text style={styles.doneBtnText}>Done</Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+// ─── Ride card ────────────────────────────────────────────────────────────────
+function RideCard({ ride, alreadyBooked, onPress }: {
+  ride: RideItem; alreadyBooked: boolean; onPress: () => void;
+}) {
   const available = ride.seats - ride.bookedSeats;
-  const pct = ride.bookedSeats / ride.seats;
+  const pct = ride.seats > 0 ? ride.bookedSeats / ride.seats : 0;
 
   return (
     <Pressable style={styles.card} onPress={onPress}>
@@ -55,10 +194,7 @@ function RideCard({ ride, onPress }: { ride: RideItem; onPress: () => void }) {
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.driverName}>{ride.driver.name}</Text>
-          <View style={styles.ratingRow}>
-            <SymbolView name={{ ios: 'star.fill', android: 'star' } as any} size={11} tintColor="#F59E0B" />
-            <Text style={styles.ratingText}>{ride.driver.rating} · {ride.driver.trips} trips</Text>
-          </View>
+          <Text style={styles.ratingText}>⭐ {ride.driver.rating} · {ride.driver.trips} trips</Text>
         </View>
         <View>
           <Text style={[styles.price, { color: C }]}>{ride.price} MAD</Text>
@@ -73,7 +209,7 @@ function RideCard({ ride, onPress }: { ride: RideItem; onPress: () => void }) {
         </View>
         <View style={styles.routeLineBox}>
           <View style={styles.routeLine} />
-          <SymbolView name={{ ios: 'chevron.right', android: 'chevron_right' } as any} size={12} tintColor="#CBD5E1" />
+          <Text style={{ color: '#CBD5E1', fontSize: 12 }}>›</Text>
         </View>
         <View style={styles.routePoint}>
           <View style={[styles.dot, { backgroundColor: '#EF4444' }]} />
@@ -82,16 +218,10 @@ function RideCard({ ride, onPress }: { ride: RideItem; onPress: () => void }) {
       </View>
 
       <View style={styles.metaRow}>
+        <View style={styles.metaChip}><Text style={styles.metaIcon}>📅</Text><Text style={styles.metaText}>{ride.date}</Text></View>
+        <View style={styles.metaChip}><Text style={styles.metaIcon}>🕐</Text><Text style={styles.metaText}>{ride.time}</Text></View>
         <View style={styles.metaChip}>
-          <SymbolView name={{ ios: 'calendar', android: 'calendar_today' } as any} size={12} tintColor="#94A3B8" />
-          <Text style={styles.metaText}>{ride.date}</Text>
-        </View>
-        <View style={styles.metaChip}>
-          <SymbolView name={{ ios: 'clock', android: 'schedule' } as any} size={12} tintColor="#94A3B8" />
-          <Text style={styles.metaText}>{ride.time}</Text>
-        </View>
-        <View style={styles.metaChip}>
-          <SymbolView name={{ ios: 'person.fill', android: 'person' } as any} size={12} tintColor={available > 0 ? C : '#EF4444'} />
+          <Text style={styles.metaIcon}>{available > 0 ? '💺' : '🈵'}</Text>
           <Text style={[styles.metaText, { color: available > 0 ? '#475569' : '#EF4444' }]}>
             {available > 0 ? `${available} seat${available > 1 ? 's' : ''}` : 'Full'}
           </Text>
@@ -106,31 +236,131 @@ function RideCard({ ride, onPress }: { ride: RideItem; onPress: () => void }) {
         {ride.preferences.slice(0, 3).map((p) => (
           <View key={p} style={styles.prefChip}><Text style={styles.prefText}>{p}</Text></View>
         ))}
-        <View style={[styles.bookBtn, { backgroundColor: C }]}>
-          <Text style={styles.bookBtnText}>View details →</Text>
-        </View>
+        {alreadyBooked ? (
+          <View style={[styles.bookBtn, { backgroundColor: '#10B981', marginLeft: 'auto' }]}>
+            <Text style={styles.bookBtnText}>✓ Booked</Text>
+          </View>
+        ) : (
+          <View style={[styles.bookBtn, { backgroundColor: C, marginLeft: 'auto' }]}>
+            <Text style={styles.bookBtnText}>View details →</Text>
+          </View>
+        )}
       </View>
     </Pressable>
   );
 }
 
+// ─── Main ─────────────────────────────────────────────────────────────────────
+type Props = {
+  onNavigate: (key: string, payload?: any) => void;
+  initialQuery?: { from: string; to: string; date: string; seats: string } | null;
+};
+
 export function PassengerSearch({ onNavigate, initialQuery }: Props) {
-  const [from,    setFrom]    = useState(initialQuery?.from  ?? '');
-  const [to,      setTo]      = useState(initialQuery?.to    ?? '');
-  const [date,    setDate]    = useState(initialQuery?.date  ?? '');
-  const [seats,   setSeats]   = useState(initialQuery?.seats ?? '1');
-  const [sort,    setSort]    = useState('Cheapest');
-  const [results, setResults] = useState<RideItem[]>(ALL_RIDES);
+  const { user } = useAuth();
+  const [from,          setFrom]          = useState(initialQuery?.from  ?? '');
+  const [to,            setTo]            = useState(initialQuery?.to    ?? '');
+  const [date,          setDate]          = useState(initialQuery?.date  ?? '');
+  const [seats,         setSeats]         = useState(initialQuery?.seats ?? '1');
+  const [sort,          setSort]          = useState('Cheapest');
+  const [allRides,      setAllRides]      = useState<RideItem[]>([]);
+  const [results,       setResults]       = useState<RideItem[]>([]);
+  const [bookedRideIds, setBookedRideIds] = useState<Set<string>>(new Set());
+  const [loading,       setLoading]       = useState(true);
+  const [dbError,       setDbError]       = useState<string | null>(null);
+  const [locLoading,    setLocLoading]    = useState(false);
+  const [locError,      setLocError]      = useState<string | null>(null);
+
+  // Location detection for departure
+  const detectDeparture = () => {
+    setLocLoading(true); setLocError(null);
+
+    if (Platform.OS === 'web') {
+      if (!('geolocation' in navigator)) { setLocError('Geolocation not supported.'); setLocLoading(false); return; }
+      navigator.geolocation.getCurrentPosition(
+        async ({ coords }) => {
+          try {
+            const res  = await fetch(
+              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.latitude}&lon=${coords.longitude}&accept-language=en`,
+            );
+            const data = await res.json();
+            const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county || '';
+            if (city) setFrom(city);
+            else setLocError('City not detected. Please type it manually.');
+          } catch { setLocError('Could not fetch city.'); }
+          setLocLoading(false);
+        },
+        (err) => {
+          if (err.code === 1) setLocError('Location access denied. Allow it in your browser.');
+          else setLocError('Could not get location.');
+          setLocLoading(false);
+        },
+        { timeout: 10000, enableHighAccuracy: false },
+      );
+      return;
+    }
+
+    Location.requestForegroundPermissionsAsync().then(async ({ status }) => {
+      if (status !== 'granted') { setLocError('Permission denied.'); setLocLoading(false); return; }
+      try {
+        const pos   = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const [geo] = await Location.reverseGeocodeAsync(pos.coords);
+        const city  = geo?.city || geo?.subregion || geo?.region || '';
+        if (city) setFrom(city);
+        else setLocError('City not detected. Please type it manually.');
+      } catch { setLocError('Could not get location.'); }
+      setLocLoading(false);
+    });
+  };
+
+  const loadRides = useCallback(async () => {
+    setLoading(true);
+    setDbError(null);
+    const today = new Date().toISOString().split('T')[0];
+
+    const [ridesRes, bookingsRes] = await Promise.all([
+      supabase
+        .from('rides')
+        .select('id, from_city, to_city, departure_date, departure_time, price, seats, booked_seats, preferences, pickup_point, dropoff_point, note, driver:driver_id(name), bookings(seats_requested, status)')
+        .eq('status', 'active')
+        .gte('departure_date', today)
+        .order('departure_date', { ascending: true }),
+      user
+        ? supabase
+            .from('bookings')
+            .select('ride_id')
+            .eq('passenger_id', user.id)
+            .in('status', ['pending', 'accepted'])
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    if (ridesRes.error) {
+      setDbError(ridesRes.error.message);
+      setLoading(false);
+      return;
+    }
+
+    const mapped = (ridesRes.data ?? []).map(toRideItem);
+    setAllRides(mapped);
+    setResults(mapped);
+    setBookedRideIds(new Set((bookingsRes.data ?? []).map((b: any) => b.ride_id)));
+    setLoading(false);
+  }, [user]);
+
+  useEffect(() => { loadRides(); }, [loadRides]);
 
   useEffect(() => {
-    if (initialQuery?.from || initialQuery?.to) applySearch(initialQuery.from, initialQuery.to);
-  }, []);
+    if (allRides.length > 0 && (initialQuery?.from || initialQuery?.to)) {
+      applySearch(initialQuery?.from ?? '', initialQuery?.to ?? '', initialQuery?.date ?? '');
+    }
+  }, [allRides]);
 
-  const applySearch = (f = from, t = to) => {
-    const filtered = ALL_RIDES.filter((r) => {
+  const applySearch = (f = from, t = to, d = date) => {
+    const filtered = allRides.filter((r) => {
       const matchFrom = !f || r.from.toLowerCase().includes(f.toLowerCase());
       const matchTo   = !t || r.to.toLowerCase().includes(t.toLowerCase());
-      return matchFrom && matchTo;
+      const matchDate = !d || r.date === d;
+      return matchFrom && matchTo && matchDate;
     });
     setResults(filtered);
   };
@@ -143,44 +373,75 @@ export function PassengerSearch({ onNavigate, initialQuery }: Props) {
   });
 
   return (
-    <ScrollView style={styles.root} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.root}
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}>
 
       <View style={styles.formCard}>
-        <View style={styles.routeBox}>
-          <View style={styles.inputRow}>
-            <SymbolView name={{ ios: 'location.fill', android: 'location_on' } as any} size={15} tintColor={C} />
-            <TextInput style={styles.input} value={from} onChangeText={setFrom} placeholder="Departure" placeholderTextColor="#94A3B8" />
-          </View>
-          <View style={styles.dividerRow}>
-            <View style={styles.divLine} />
-            <Pressable style={[styles.swapBtn, { borderColor: C + '40' }]} onPress={() => { const t = from; setFrom(to); setTo(t); }}>
-              <SymbolView name={{ ios: 'arrow.up.arrow.down', android: 'swap_vert' } as any} size={13} tintColor={C} />
-            </Pressable>
-            <View style={styles.divLine} />
-          </View>
-          <View style={styles.inputRow}>
-            <SymbolView name={{ ios: 'mappin', android: 'place' } as any} size={15} tintColor="#EF4444" />
-            <TextInput style={styles.input} value={to} onChangeText={setTo} placeholder="Destination" placeholderTextColor="#94A3B8" />
-          </View>
+        {/* From */}
+        <CityPicker value={from} onSelect={setFrom} placeholder="Departure city" emoji="🟢" />
+
+        {/* Use my location */}
+        <Pressable style={styles.locLink} onPress={detectDeparture} disabled={locLoading}>
+          <Text style={[styles.locLinkTxt, { color: C }]}>
+            {locLoading ? '📍  Detecting…' : '📍  Use my current location'}
+          </Text>
+        </Pressable>
+        {locError ? <Text style={styles.locError}>{locError}</Text> : null}
+
+        {/* Swap */}
+        <View style={styles.dividerRow}>
+          <View style={styles.divLine} />
+          <Pressable
+            style={[styles.swapBtn, { borderColor: C + '40' }]}
+            onPress={() => { const t = from; setFrom(to); setTo(t); }}>
+            <Text style={{ fontSize: 13 }}>⇅</Text>
+          </Pressable>
+          <View style={styles.divLine} />
         </View>
 
+        {/* To */}
+        <CityPicker value={to} onSelect={setTo} placeholder="Destination city" emoji="🔴" />
+
+        {/* Date + Seats + Search */}
         <View style={styles.row}>
-          <View style={[styles.inputRow, styles.inlineBox, { flex: 2 }]}>
-            <SymbolView name={{ ios: 'calendar', android: 'calendar_today' } as any} size={13} tintColor="#94A3B8" />
-            <TextInput style={[styles.input, { fontSize: 13 }]} value={date} onChangeText={setDate} placeholder="Date" placeholderTextColor="#94A3B8" />
+          <View style={{ flex: 2 }}>
+            <DateField value={date} onChange={setDate} />
           </View>
-          <View style={[styles.inputRow, styles.inlineBox, { flex: 1 }]}>
-            <SymbolView name={{ ios: 'person.fill', android: 'person' } as any} size={13} tintColor="#94A3B8" />
-            <TextInput style={[styles.input, { fontSize: 13 }]} value={seats} onChangeText={setSeats} placeholder="Seats" placeholderTextColor="#94A3B8" keyboardType="numeric" />
+          <View style={[styles.seatsBox, { flex: 1 }]}>
+            <Text>💺</Text>
+            <TextInput
+              style={styles.seatsInput} value={seats} onChangeText={setSeats}
+              placeholder="Seats" placeholderTextColor="#94A3B8" keyboardType="numeric"
+            />
           </View>
           <Pressable style={[styles.searchBtn, { backgroundColor: C }]} onPress={() => applySearch()}>
-            <SymbolView name={{ ios: 'magnifyingglass', android: 'search' } as any} size={16} tintColor="#fff" />
+            <Text style={{ color: '#fff', fontSize: 17 }}>🔍</Text>
           </Pressable>
         </View>
       </View>
 
+      {dbError && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>⚠️ Could not load rides: {dbError}</Text>
+          <Pressable style={styles.retryBtn} onPress={loadRides}>
+            <Text style={styles.retryTxt}>Retry</Text>
+          </Pressable>
+        </View>
+      )}
+
       <View style={styles.resultsHeader}>
-        <Text style={styles.resultsCount}>{sorted.length} ride{sorted.length !== 1 ? 's' : ''} found</Text>
+        <Text style={styles.resultsCount}>
+          {sorted.length} ride{sorted.length !== 1 ? 's' : ''} found
+          {allRides.length > 0 && sorted.length < allRides.length
+            ? ` (${allRides.length} total loaded)`
+            : ''}
+        </Text>
+        <Pressable onPress={loadRides} style={styles.refreshBtn}>
+          <Text style={styles.refreshTxt}>🔄</Text>
+        </Pressable>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 4 }}>
@@ -191,14 +452,31 @@ export function PassengerSearch({ onNavigate, initialQuery }: Props) {
         ))}
       </ScrollView>
 
-      {sorted.length === 0 ? (
+      {loading ? (
         <View style={styles.empty}>
-          <SymbolView name={{ ios: 'magnifyingglass', android: 'search' } as any} size={52} tintColor="#CBD5E1" />
+          <Text style={styles.emptyTitle}>Loading rides…</Text>
+        </View>
+      ) : sorted.length === 0 ? (
+        <View style={styles.empty}>
+          <Text style={{ fontSize: 48 }}>🔍</Text>
           <Text style={styles.emptyTitle}>No rides found</Text>
           <Text style={styles.emptySub}>Try different cities or dates.</Text>
         </View>
       ) : (
-        sorted.map((r) => <RideCard key={r.id} ride={r} onPress={() => onNavigate('ride-detail', r)} />)
+        sorted.map((r) => (
+          <RideCard
+            key={r.id}
+            ride={r}
+            alreadyBooked={bookedRideIds.has(r.id)}
+            onPress={() => {
+              if (bookedRideIds.has(r.id)) {
+                onNavigate('bookings');
+              } else {
+                onNavigate('ride-detail', r);
+              }
+            }}
+          />
+        ))
       )}
 
     </ScrollView>
@@ -207,24 +485,73 @@ export function PassengerSearch({ onNavigate, initialQuery }: Props) {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  content: { padding: 20, gap: 16, paddingBottom: 32 },
+  content: { padding: 20, gap: 14, paddingBottom: 32 },
 
   formCard: {
     backgroundColor: '#fff', borderRadius: 16, padding: 14, gap: 10,
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 3,
   },
-  routeBox: { backgroundColor: '#F8FAFC', borderRadius: 12, padding: 10, borderWidth: 1, borderColor: '#E2E8F0' },
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
-  input: { flex: 1, fontSize: 15, color: '#1E293B' },
+
+  cityBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#F8FAFC', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
+    borderWidth: 1, borderColor: '#E2E8F0',
+  },
+  cityBtnText: { flex: 1, fontSize: 15, color: '#94A3B8' },
+  dropdown: {
+    backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0',
+    overflow: 'hidden', marginTop: 4,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 8,
+  },
+  dropdownSearch: {
+    borderBottomWidth: 1, borderBottomColor: '#E2E8F0',
+    paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: '#1E293B',
+  },
+  dropdownItem: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#F8FAFC',
+  },
+  dropdownItemText: { fontSize: 15, color: '#1E293B' },
+  dropdownEmpty: { padding: 14, color: '#94A3B8', textAlign: 'center' },
+
+  locLink: { marginTop: -4, paddingLeft: 2 },
+  locLinkTxt: { fontSize: 13, fontWeight: '600' },
+  locError: { fontSize: 12, color: '#EF4444', paddingLeft: 2 },
+
   dividerRow: { flexDirection: 'row', alignItems: 'center' },
   divLine: { flex: 1, height: 1, backgroundColor: '#E2E8F0' },
-  swapBtn: { padding: 6, borderRadius: 14, borderWidth: 1, backgroundColor: '#fff', marginHorizontal: 8 },
+  swapBtn: { padding: 6, borderRadius: 14, borderWidth: 1, backgroundColor: '#fff', marginHorizontal: 8, alignItems: 'center', justifyContent: 'center' },
+
+  dateBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#F8FAFC', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
+    borderWidth: 1, borderColor: '#E2E8F0',
+  },
+  dateBtnText: { flex: 1, fontSize: 14, color: '#94A3B8' },
+  doneBtn: { borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 6 },
+  doneBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+
   row: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  inlineBox: { backgroundColor: '#F8FAFC', borderRadius: 10, paddingHorizontal: 10, borderWidth: 1, borderColor: '#E2E8F0' },
-  searchBtn: { width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  seatsBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#F8FAFC', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12,
+    borderWidth: 1, borderColor: '#E2E8F0',
+  },
+  seatsInput: { flex: 1, fontSize: 14, color: '#1E293B' },
+  searchBtn: { width: 46, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+
+  errorBanner: {
+    backgroundColor: '#FEF2F2', borderRadius: 12, padding: 14,
+    borderWidth: 1, borderColor: '#FECACA', flexDirection: 'row', alignItems: 'center', gap: 10,
+  },
+  errorText: { flex: 1, color: '#EF4444', fontSize: 13, fontWeight: '500' },
+  retryBtn: { backgroundColor: '#EF4444', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
+  retryTxt: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
   resultsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  resultsCount: { fontSize: 15, fontWeight: '700', color: '#1E293B' },
+  resultsCount: { fontSize: 15, fontWeight: '700', color: '#1E293B', flex: 1 },
+  refreshBtn: { padding: 6 },
+  refreshTxt: { fontSize: 18 },
 
   sortChip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' },
   sortText: { fontSize: 13, fontWeight: '600', color: '#64748B' },
@@ -237,8 +564,7 @@ const styles = StyleSheet.create({
   avatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   avatarInitial: { fontSize: 17, fontWeight: '800' },
   driverName: { fontSize: 14, fontWeight: '700', color: '#1E293B' },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  ratingText: { fontSize: 12, color: '#64748B' },
+  ratingText: { fontSize: 12, color: '#64748B', marginTop: 2 },
   price: { fontSize: 18, fontWeight: '800', textAlign: 'right' },
   priceSub: { fontSize: 11, color: '#94A3B8', textAlign: 'right' },
 
@@ -251,6 +577,7 @@ const styles = StyleSheet.create({
 
   metaRow: { flexDirection: 'row', gap: 8 },
   metaChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F8FAFC', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  metaIcon: { fontSize: 11 },
   metaText: { fontSize: 12, color: '#475569' },
 
   seatBarTrack: { height: 4, backgroundColor: '#E2E8F0', borderRadius: 2, overflow: 'hidden' },

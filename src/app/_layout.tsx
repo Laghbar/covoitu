@@ -1,8 +1,9 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
 import { useState } from 'react';
-import { useColorScheme } from 'react-native';
+import { Text, useColorScheme, View } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import AdminDashboard from '@/components/admin-dashboard';
 import { AuthScreen } from '@/components/auth-screen';
 import DriverDashboard from '@/components/driver-dashboard';
 import PassengerDashboard from '@/components/passenger-dashboard';
@@ -32,6 +33,18 @@ function AppContent() {
       }
     } else if (showWelcome) {
       content = <WelcomeScreen onContinue={dismissWelcome} />;
+    } else if (user.is_admin) {
+      content = <AdminDashboard />;
+    } else if (user.suspended) {
+      content = (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 32 }}>
+          <Text style={{ fontSize: 48 }}>🚫</Text>
+          <Text style={{ fontSize: 20, fontWeight: '800', color: '#1E293B' }}>Account Suspended</Text>
+          <Text style={{ fontSize: 14, color: '#64748B', textAlign: 'center' }}>
+            Your account has been suspended. Contact support for more information.
+          </Text>
+        </View>
+      );
     } else {
       content = user.role === 'driver' ? <DriverDashboard /> : <PassengerDashboard />;
     }

@@ -1,49 +1,20 @@
 import { SymbolView } from 'expo-symbols';
-import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+
+import { useAuth } from '@/context/auth';
+import { supabase } from '@/lib/supabase';
 
 const C = '#10B981';
 
 type Status = 'active' | 'completed' | 'cancelled';
 
 type Ride = {
-  id: string; from: string; to: string; date: string; time: string;
-  booked: number; seats: number; revenue: number; status: Status;
-  passengers: { name: string; initial: string; status: 'confirmed' | 'pending' }[];
+  id: string; from_city: string; to_city: string;
+  departure_date: string; departure_time: string;
+  seats: number; price: number; status: Status;
+  booked_seats?: number;
 };
-
-const RIDES: Ride[] = [
-  {
-    id: '1', from: 'Casablanca', to: 'Rabat', date: 'Lun 15 Jun', time: '08:30',
-    booked: 2, seats: 3, revenue: 90, status: 'active',
-    passengers: [
-      { name: 'Fatima Zahra', initial: 'F', status: 'confirmed' },
-      { name: 'Omar Soussi',  initial: 'O', status: 'confirmed' },
-    ],
-  },
-  {
-    id: '2', from: 'Rabat', to: 'Casablanca', date: 'Mer 18 Jun', time: '17:00',
-    booked: 1, seats: 3, revenue: 40, status: 'active',
-    passengers: [
-      { name: 'Aicha Moukrim', initial: 'A', status: 'pending' },
-    ],
-  },
-  {
-    id: '3', from: 'Casablanca', to: 'Marrakech', date: 'Sam 07 Jun', time: '07:00',
-    booked: 3, seats: 3, revenue: 360, status: 'completed',
-    passengers: [],
-  },
-  {
-    id: '4', from: 'Fès', to: 'Meknès', date: 'Ven 30 Mai', time: '09:30',
-    booked: 2, seats: 2, revenue: 70, status: 'completed',
-    passengers: [],
-  },
-  {
-    id: '5', from: 'Tanger', to: 'Tétouan', date: 'Lun 20 Mai', time: '08:00',
-    booked: 0, seats: 3, revenue: 0, status: 'cancelled',
-    passengers: [],
-  },
-];
 
 const STATUS_META: Record<Status, { bg: string; color: string; label: string }> = {
   active:    { bg: '#F0FDF4', color: C,         label: 'Active' },
@@ -51,82 +22,68 @@ const STATUS_META: Record<Status, { bg: string; color: string; label: string }> 
   cancelled: { bg: '#FEF2F2', color: '#EF4444', label: 'Cancelled' },
 };
 
-function RideCard({ ride }: { ride: Ride }) {
-  const [showPassengers, setShowPassengers] = useState(false);
-  const meta = STATUS_META[ride.status];
-  const pct = ride.seats > 0 ? ride.booked / ride.seats : 0;
+function confirm(message: string, onConfirm: () => void) {
+  if (Platform.OS === 'web') {
+    if (window.confirm(message)) onConfirm();
+  } else {
+    Alert.alert('Confirm', message, [
+      { text: 'No', style: 'cancel' },
+      { text: 'Yes', style: 'destructive', onPress: onConfirm },
+    ]);
+  }
+}
+
+function RideCard({
+  ride, onComplete, onCancel, onDelete,
+}: { ride: Ride; onComplete: (id: string) => void; onCancel: (id: string) => void; onDelete: (id: string) => void }) {
+  const meta   = STATUS_META[ride.status];
+  const booked = ride.booked_seats ?? 0;
+  const pct    = ride.seats > 0 ? booked / ride.seats : 0;
 
   return (
     <View style={styles.card}>
-      {/* Top row */}
       <View style={styles.cardTop}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.cardRoute}>{ride.from} → {ride.to}</Text>
-          <Text style={styles.cardMeta}>{ride.date} · {ride.time}</Text>
+          <Text style={styles.cardRoute}>{ride.from_city} → {ride.to_city}</Text>
+          <Text style={styles.cardMeta}>{ride.departure_date} · {ride.departure_time}</Text>
         </View>
         <View style={[styles.statusPill, { backgroundColor: meta.bg }]}>
           <Text style={[styles.statusText, { color: meta.color }]}>{meta.label}</Text>
         </View>
       </View>
 
-      {/* Progress bar */}
       <View style={styles.progressTrack}>
-        <View style={[styles.progressFill, { width: `${pct * 100}%` as any, backgroundColor: pct === 1 ? '#F59E0B' : C }]} />
+        <View style={[styles.progressFill, { width: `${pct * 100}%` as any, backgroundColor: pct >= 1 ? '#F59E0B' : C }]} />
       </View>
-      <Text style={styles.progressLabel}>{ride.booked}/{ride.seats} seats booked</Text>
+      <Text style={styles.progressLabel}>{booked}/{ride.seats} seats booked</Text>
 
-      {/* Footer */}
       <View style={styles.cardFooter}>
-        <Text style={[styles.revenue, { color: C }]}>{ride.revenue} MAD</Text>
+        <Text style={[styles.revenue, { color: C }]}>{ride.price * booked} MAD earned</Text>
 
-        {ride.status === 'active' && (
-          <View style={styles.footerActions}>
-            <Pressable
-              style={[styles.footerBtn, { borderColor: C + '50' }]}
-              onPress={() => setShowPassengers(!showPassengers)}>
-              <SymbolView name={{ ios: 'person.2.fill', android: 'group' } as any} size={13} tintColor={C} />
-              <Text style={[styles.footerBtnText, { color: C }]}>
-                {showPassengers ? 'Hide' : 'Passengers'}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.footerBtn, { borderColor: '#E2E8F0' }]}
-              onPress={() => Alert.alert('Edit Ride', 'Edit functionality coming soon.')}>
-              <SymbolView name={{ ios: 'pencil', android: 'edit' } as any} size={13} tintColor="#475569" />
-              <Text style={styles.footerBtnText}>Edit</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => Alert.alert('Delete Ride', 'Are you sure?', [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Delete', style: 'destructive' },
-              ])}>
-              <SymbolView name={{ ios: 'trash', android: 'delete' } as any} size={16} tintColor="#EF4444" />
-            </Pressable>
-          </View>
-        )}
-      </View>
+        <View style={styles.actions}>
+          {ride.status === 'active' && (
+            <>
+              <Pressable
+                style={styles.completeBtn}
+                onPress={() => confirm('Mark this trip as completed?', () => onComplete(ride.id))}>
+                <Text style={styles.completeBtnText}>✓ Complete</Text>
+              </Pressable>
+              <Pressable
+                style={styles.cancelBtn}
+                onPress={() => confirm('Cancel this trip? Passengers will be notified.', () => onCancel(ride.id))}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </Pressable>
+            </>
+          )}
 
-      {/* Passenger list */}
-      {showPassengers && ride.passengers.length > 0 && (
-        <View style={styles.passengerBox}>
-          <Text style={styles.paxTitle}>Booked Passengers</Text>
-          {ride.passengers.map((p, i) => (
-            <View key={i} style={styles.paxRow}>
-              <View style={[styles.paxAvatar, { backgroundColor: '#3B82F6' + '18' }]}>
-                <Text style={[styles.paxInitial, { color: '#3B82F6' }]}>{p.initial}</Text>
-              </View>
-              <Text style={styles.paxName}>{p.name}</Text>
-              <View style={[styles.paxStatus, {
-                backgroundColor: p.status === 'confirmed' ? '#F0FDF4' : '#FFF7ED',
-              }]}>
-                <Text style={{ fontSize: 11, fontWeight: '600', color: p.status === 'confirmed' ? C : '#F97316' }}>
-                  {p.status === 'confirmed' ? '✓ Confirmed' : '⏳ Pending'}
-                </Text>
-              </View>
-            </View>
-          ))}
+          {ride.status !== 'active' && (
+            <Pressable
+              onPress={() => confirm('Delete this ride from your history?', () => onDelete(ride.id))}>
+              <SymbolView name={{ ios: 'trash', android: 'delete' } as any} size={18} tintColor="#EF4444" />
+            </Pressable>
+          )}
         </View>
-      )}
+      </View>
     </View>
   );
 }
@@ -134,26 +91,96 @@ function RideCard({ ride }: { ride: Ride }) {
 type Props = { onNavigate: (key: string) => void };
 
 export function DriverRides({ onNavigate }: Props) {
-  const [tab, setTab] = useState<Status>('active');
-  const filtered = RIDES.filter((r) => r.status === tab);
+  const { user } = useAuth();
+  const [tab,      setTab]      = useState<Status>('active');
+  const [rides,    setRides]    = useState<Ride[]>([]);
+  const [loading,  setLoading]  = useState(true);
+  const [fetchErr, setFetchErr] = useState<string | null>(null);
+
+  const fetchRides = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+
+    // Fetch rides + their bookings so we can calculate booked seats from source of truth
+    const { data, error } = await supabase
+      .from('rides')
+      .select(`
+        id, from_city, to_city, departure_date, departure_time,
+        seats, price, status, created_at,
+        bookings(seats_requested, status)
+      `)
+      .eq('driver_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (error) { setFetchErr(error.message); setLoading(false); return; }
+    setFetchErr(null);
+
+    const allRides: Ride[] = (data ?? []).map((r: any) => ({
+      ...r,
+      // Count only accepted bookings — cancelled/rejected don't occupy seats
+      booked_seats: (r.bookings ?? [])
+        .filter((b: any) => b.status === 'accepted')
+        .reduce((sum: number, b: any) => sum + (b.seats_requested ?? 0), 0),
+    }));
+
+    setRides(allRides);
+    setLoading(false);
+  }, [user]);
+
+  useEffect(() => { fetchRides(); }, [fetchRides]);
+
+  // Re-fetch whenever any booking changes (accept / cancel / reject) so counts stay live
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel('driver-rides-bookings-live')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'bookings' }, fetchRides)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user, fetchRides]);
+
+  const completeRide = async (id: string) => {
+    const { error } = await supabase.from('rides').update({ status: 'completed' }).eq('id', id);
+    if (error) return;
+    setRides(prev => prev.map(r => r.id === id ? { ...r, status: 'completed' as Status } : r));
+  };
+
+  const cancelRide = async (id: string) => {
+    const { error } = await supabase.from('rides').update({ status: 'cancelled' }).eq('id', id);
+    if (error) return;
+    setRides(prev => prev.map(r => r.id === id ? { ...r, status: 'cancelled' as Status } : r));
+  };
+
+  const deleteRide = async (id: string) => {
+    const { error } = await supabase.from('rides').delete().eq('id', id);
+    if (error) return;
+    setRides(prev => prev.filter(r => r.id !== id));
+  };
+
+  const filtered = rides.filter(r => r.status === tab);
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
       <Text style={styles.pageTitle}>My Rides</Text>
 
-      {/* Tab switcher */}
       <View style={styles.tabs}>
         {(['active', 'completed', 'cancelled'] as Status[]).map((t) => (
           <Pressable key={t} style={[styles.tabChip, tab === t && { backgroundColor: C }]} onPress={() => setTab(t)}>
             <Text style={[styles.tabText, tab === t && { color: '#fff' }]}>
               {t.charAt(0).toUpperCase() + t.slice(1)}
+              {t === 'active' && rides.filter(r => r.status === 'active').length > 0
+                ? ` (${rides.filter(r => r.status === 'active').length})` : ''}
             </Text>
           </Pressable>
         ))}
       </View>
 
-      {filtered.length === 0 ? (
+      {loading ? (
+        <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>Loading rides…</Text>
+        </View>
+      ) : filtered.length === 0 ? (
         <View style={styles.empty}>
           <SymbolView name={{ ios: 'car.fill', android: 'directions_car' } as any} size={52} tintColor="#CBD5E1" />
           <Text style={styles.emptyTitle}>No {tab} rides</Text>
@@ -164,7 +191,9 @@ export function DriverRides({ onNavigate }: Props) {
           )}
         </View>
       ) : (
-        filtered.map((r) => <RideCard key={r.id} ride={r} />)
+        filtered.map(r => (
+          <RideCard key={r.id} ride={r} onComplete={completeRide} onCancel={cancelRide} onDelete={deleteRide} />
+        ))
       )}
 
     </ScrollView>
@@ -195,18 +224,19 @@ const styles = StyleSheet.create({
   progressLabel: { fontSize: 12, color: '#64748B', marginTop: -4 },
 
   cardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  revenue: { fontSize: 16, fontWeight: '700' },
-  footerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  footerBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1 },
-  footerBtnText: { fontSize: 12, fontWeight: '600', color: '#475569' },
+  revenue: { fontSize: 15, fontWeight: '700' },
 
-  passengerBox: { borderTopWidth: 1, borderTopColor: '#F1F5F9', paddingTop: 10, gap: 8 },
-  paxTitle: { fontSize: 11, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.5 },
-  paxRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  paxAvatar: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  paxInitial: { fontSize: 13, fontWeight: '700' },
-  paxName: { flex: 1, fontSize: 14, fontWeight: '500', color: '#1E293B' },
-  paxStatus: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  completeBtn: {
+    paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20,
+    backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: C,
+  },
+  completeBtnText: { fontSize: 13, fontWeight: '700', color: C },
+  cancelBtn: {
+    paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20,
+    backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#FCD34D',
+  },
+  cancelBtnText: { fontSize: 13, fontWeight: '700', color: '#D97706' },
 
   empty: { alignItems: 'center', paddingVertical: 56, gap: 12 },
   emptyTitle: { fontSize: 16, color: '#94A3B8', fontWeight: '500' },

@@ -1,143 +1,198 @@
-import { SymbolView } from 'expo-symbols';
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
-import { DriverHome } from './driver/home';
-import { DriverCreateTrip } from './driver/create-trip';
-import { DriverRides } from './driver/rides';
-import { DriverInvitations } from './driver/invitations';
-import { DriverVehicle } from './driver/vehicle';
-import { DriverMessages } from './driver/messages';
-import { DriverProfile } from './driver/profile';
+import { supabase } from '@/lib/supabase';
+import { DriverHome }             from './driver/home';
+import { DriverCreateTrip }       from './driver/create-trip';
+import { DriverRides }            from './driver/rides';
+import { DriverProfile }          from './driver/profile';
+import { NotificationsPanel }     from './driver/notifications-panel';
 
 export const DRIVER_COLOR = '#10B981';
 
-type TabKey = 'home' | 'create' | 'rides' | 'invitations' | 'vehicle' | 'messages' | 'profile';
+type TabKey = 'home' | 'create' | 'rides' | 'profile';
 
-const TABS: { key: TabKey; label: string; icon: { ios: string; android: string } }[] = [
-  { key: 'home',        label: 'Home',        icon: { ios: 'house.fill',           android: 'home' } },
-  { key: 'create',      label: 'Create Trip', icon: { ios: 'plus.circle.fill',     android: 'add_circle' } },
-  { key: 'rides',       label: 'My Rides',    icon: { ios: 'car.fill',             android: 'directions_car' } },
-  { key: 'invitations', label: 'Invitations', icon: { ios: 'envelope.fill',        android: 'mail' } },
-  { key: 'vehicle',     label: 'Vehicle',     icon: { ios: 'car.2.fill',           android: 'commute' } },
-  { key: 'messages',    label: 'Messages',    icon: { ios: 'message.fill',         android: 'chat' } },
-  { key: 'profile',     label: 'Profile',     icon: { ios: 'person.fill',          android: 'person' } },
+const TABS: { key: TabKey; emoji: string; label: string }[] = [
+  { key: 'home',   emoji: '🏠', label: 'Home'     },
+  { key: 'create', emoji: '➕', label: 'New Trip'  },
+  { key: 'rides',  emoji: '🚗', label: 'My Rides' },
+  { key: 'profile',emoji: '👤', label: 'Profile'  },
 ];
 
-function TopNavBar({ active, onChange, inviteCount }: {
-  active: TabKey;
-  onChange: (k: TabKey) => void;
-  inviteCount?: number;
+function AppBar({
+  pendingCount,
+  onBellPress,
+  onAvatarPress,
+}: {
+  pendingCount: number;
+  onBellPress: () => void;
+  onAvatarPress: () => void;
 }) {
   const { user } = useAuth();
-  const initial = (user?.name?.[0] ?? 'D').toUpperCase();
+  const initial  = (user?.name?.[0] ?? 'D').toUpperCase();
 
   return (
-    <View style={styles.navContainer}>
-      {/* App bar */}
-      <View style={styles.appBar}>
-        <View style={styles.appBarLeft}>
-          <View style={[styles.appLogo, { backgroundColor: DRIVER_COLOR }]}>
-            <SymbolView name={{ ios: 'car.fill', android: 'directions_car' } as any} size={14} tintColor="#fff" />
-          </View>
-          <Text style={styles.appName}>Harizana</Text>
-          <View style={[styles.rolePill, { backgroundColor: DRIVER_COLOR + '18' }]}>
-            <Text style={[styles.roleText, { color: DRIVER_COLOR }]}>Driver</Text>
-          </View>
+    <View style={styles.appBar}>
+      <View style={styles.appBarLeft}>
+        <View style={[styles.appLogo, { backgroundColor: DRIVER_COLOR }]}>
+          <Text style={{ fontSize: 12 }}>🚗</Text>
         </View>
-        <Pressable onPress={() => onChange('profile')} style={[styles.avatarBtn, { backgroundColor: DRIVER_COLOR }]}>
+        <Text style={styles.appName}>Harizana</Text>
+        <View style={[styles.rolePill, { backgroundColor: DRIVER_COLOR + '18' }]}>
+          <Text style={[styles.roleText, { color: DRIVER_COLOR }]}>Driver</Text>
+        </View>
+      </View>
+      <View style={styles.appBarRight}>
+        <Pressable style={styles.bellWrap} onPress={onBellPress}>
+          <Text style={styles.bellIcon}>🔔</Text>
+          {pendingCount > 0 && (
+            <View style={styles.bellBadge}>
+              <Text style={styles.bellBadgeText}>{pendingCount > 9 ? '9+' : pendingCount}</Text>
+            </View>
+          )}
+        </Pressable>
+        <Pressable onPress={onAvatarPress} style={[styles.avatarBtn, { backgroundColor: DRIVER_COLOR }]}>
           <Text style={styles.avatarText}>{initial}</Text>
         </Pressable>
       </View>
+    </View>
+  );
+}
 
-      {/* Horizontal tab strip */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tabStrip}>
-        {TABS.map((tab) => {
-          const focused = tab.key === active;
-          const hasNotif = tab.key === 'invitations' && (inviteCount ?? 0) > 0;
-          return (
-            <Pressable key={tab.key} style={styles.tabItem} onPress={() => onChange(tab.key)}>
-              <View style={styles.tabIconRow}>
-                <SymbolView
-                  name={tab.icon as any}
-                  size={18}
-                  tintColor={focused ? DRIVER_COLOR : '#94A3B8'}
-                />
-                {hasNotif && <View style={[styles.notifDot, { backgroundColor: '#EF4444' }]} />}
-              </View>
-              <Text style={[styles.tabLabel, focused && { color: DRIVER_COLOR, fontWeight: '700' }]}>
-                {tab.label}
-              </Text>
-              {focused && <View style={[styles.activeBar, { backgroundColor: DRIVER_COLOR }]} />}
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+function BottomTabBar({
+  active,
+  onChange,
+}: {
+  active: TabKey;
+  onChange: (k: TabKey) => void;
+}) {
+  return (
+    <View style={styles.tabBar}>
+      {TABS.map(tab => {
+        const focused = tab.key === active;
+        return (
+          <Pressable key={tab.key} style={styles.tabItem} onPress={() => onChange(tab.key)}>
+            {focused && <View style={[styles.tabActiveBar, { backgroundColor: DRIVER_COLOR }]} />}
+            <Text style={[styles.tabEmoji, focused && styles.tabEmojiActive]}>{tab.emoji}</Text>
+            <Text style={[styles.tabLabel, focused && { color: DRIVER_COLOR, fontWeight: '700' }]}>
+              {tab.label}
+            </Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
 
 export default function DriverDashboard() {
-  const [tab, setTab] = useState<TabKey>('home');
-  const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const insets   = useSafeAreaInsets();
+  const [tab,            setTab]            = useState<TabKey>('home');
+  const [pendingCount,   setPendingCount]   = useState(0);
+  const [panelVisible,   setPanelVisible]   = useState(false);
+
+  const fetchPendingCount = useCallback(async () => {
+    if (!user) return;
+    const { data: rides } = await supabase.from('rides').select('id').eq('driver_id', user.id);
+    const ids = rides?.map(r => r.id) ?? [];
+    if (!ids.length) { setPendingCount(0); return; }
+    const { count } = await supabase
+      .from('bookings')
+      .select('id', { count: 'exact', head: true })
+      .in('ride_id', ids)
+      .eq('status', 'pending');
+    setPendingCount(count ?? 0);
+  }, [user]);
+
+  useEffect(() => { fetchPendingCount(); }, [fetchPendingCount]);
+
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel('driver-bookings-badge')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, fetchPendingCount)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user, fetchPendingCount]);
+
+  const navigate = (key: string) => setTab(key as TabKey);
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#F0FDF4' }}>
-      <View style={{ paddingTop: insets.top }}>
-        <TopNavBar active={tab} onChange={setTab} inviteCount={3} />
+    <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+      <View style={[styles.topSafe, { paddingTop: insets.top }]}>
+        <AppBar
+          pendingCount={pendingCount}
+          onBellPress={() => setPanelVisible(true)}
+          onAvatarPress={() => setTab('profile')}
+        />
       </View>
 
       <View style={{ flex: 1 }}>
-        {tab === 'home'        && <DriverHome        onNavigate={(k) => setTab(k as TabKey)} />}
-        {tab === 'create'      && <DriverCreateTrip  onNavigate={(k) => setTab(k as TabKey)} />}
-        {tab === 'rides'       && <DriverRides        onNavigate={(k) => setTab(k as TabKey)} />}
-        {tab === 'invitations' && <DriverInvitations />}
-        {tab === 'vehicle'     && <DriverVehicle />}
-        {tab === 'messages'    && <DriverMessages />}
-        {tab === 'profile'     && <DriverProfile />}
+        {tab === 'home'    && <DriverHome       onNavigate={navigate} />}
+        {tab === 'create'  && <DriverCreateTrip onNavigate={navigate} />}
+        {tab === 'rides'   && <DriverRides      onNavigate={navigate} />}
+        {tab === 'profile' && <DriverProfile />}
       </View>
+
+      <View style={{ paddingBottom: insets.bottom, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0' }}>
+        <BottomTabBar active={tab} onChange={setTab} />
+      </View>
+
+      <NotificationsPanel
+        visible={panelVisible}
+        onClose={() => setPanelVisible(false)}
+        onCountChange={setPendingCount}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  navContainer: {
+  topSafe: {
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
   },
-
   appBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 10,
   },
-  appBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  appBarLeft:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  appBarRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   appLogo: {
     width: 28, height: 28, borderRadius: 8,
     alignItems: 'center', justifyContent: 'center',
   },
-  appName: { fontSize: 17, fontWeight: '800', color: '#1E293B', letterSpacing: -0.3 },
+  appName:  { fontSize: 17, fontWeight: '800', color: '#1E293B', letterSpacing: -0.3 },
   rolePill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   roleText: { fontSize: 11, fontWeight: '700' },
-  avatarBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+
+  bellWrap: { position: 'relative', padding: 4 },
+  bellIcon: { fontSize: 20 },
+  bellBadge: {
+    position: 'absolute', top: 0, right: 0,
+    minWidth: 16, height: 16, borderRadius: 8,
+    backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 3, borderWidth: 1.5, borderColor: '#fff',
+  },
+  bellBadgeText: { fontSize: 9, fontWeight: '900', color: '#fff' },
+  avatarBtn:  { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontSize: 14, fontWeight: '700' },
 
-  tabStrip: { paddingHorizontal: 8, paddingBottom: 0 },
-  tabItem: { alignItems: 'center', paddingHorizontal: 12, paddingTop: 4, paddingBottom: 0, gap: 4, minWidth: 72 },
-  tabIconRow: { position: 'relative' },
-  notifDot: {
-    position: 'absolute', top: -2, right: -4,
-    width: 8, height: 8, borderRadius: 4,
-    borderWidth: 1.5, borderColor: '#fff',
+  tabBar: {
+    flexDirection: 'row',
+    paddingTop: 6,
+    paddingBottom: Platform.OS === 'ios' ? 0 : 6,
   },
-  tabLabel: { fontSize: 11, color: '#94A3B8', fontWeight: '500' },
-  activeBar: { height: 3, width: '100%', borderTopLeftRadius: 2, borderTopRightRadius: 2 },
+  tabItem: {
+    flex: 1, alignItems: 'center', gap: 2, paddingVertical: 4, position: 'relative',
+  },
+  tabActiveBar: {
+    position: 'absolute', top: 0, left: 12, right: 12, height: 3, borderRadius: 2,
+  },
+  tabEmoji:       { fontSize: 22, opacity: 0.4 },
+  tabEmojiActive: { opacity: 1 },
+  tabLabel: { fontSize: 10, color: '#94A3B8', fontWeight: '500' },
 });

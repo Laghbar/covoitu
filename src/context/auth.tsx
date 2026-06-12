@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { supabase } from '@/lib/supabase';
 import { Role } from '@/lib/api';
 
-export type User = { id: string; email: string; name: string; role: Role };
+export type User = { id: string; email: string; name: string; role: Role; is_admin: boolean; suspended: boolean };
 
 type AuthContextType = {
   user: User | null;
@@ -22,26 +22,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading]     = useState(true);
   const [showWelcome, setShowWelcome] = useState(false);
 
-  // Map a Supabase session user to our User type
-  function toUser(supaUser: any): User | null {
+  async function toUser(supaUser: any): Promise<User | null> {
     if (!supaUser) return null;
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('is_admin, suspended')
+      .eq('id', supaUser.id)
+      .single();
     return {
-      id:    supaUser.id,
-      email: supaUser.email ?? '',
-      name:  supaUser.user_metadata?.name  ?? supaUser.email ?? '',
-      role:  (supaUser.user_metadata?.role ?? 'passenger') as Role,
+      id:        supaUser.id,
+      email:     supaUser.email ?? '',
+      name:      supaUser.user_metadata?.name ?? supaUser.email ?? '',
+      role:      (supaUser.user_metadata?.role ?? 'passenger') as Role,
+      is_admin:  profile?.is_admin  ?? false,
+      suspended: profile?.suspended ?? false,
     };
   }
 
-  // Restore session on mount and listen for auth state changes
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(toUser(data.session?.user ?? null));
+    supabase.auth.getSession().then(async ({ data }) => {
+      setUser(await toUser(data.session?.user ?? null));
       setIsLoading(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(toUser(session?.user ?? null));
+    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setUser(await toUser(session?.user ?? null));
     });
 
     return () => listener.subscription.unsubscribe();

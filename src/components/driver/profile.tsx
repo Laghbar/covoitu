@@ -1,10 +1,13 @@
 import * as ImagePicker from 'expo-image-picker';
 import { Image } from 'expo-image';
 import { SymbolView } from 'expo-symbols';
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '@/context/auth';
+import { supabase } from '@/lib/supabase';
+import { DriverQRModal }   from './qr-modal';
+import { DocumentsModal } from './documents';
 
 const C = '#10B981';
 
@@ -35,17 +38,59 @@ function MenuRow({ item }: { item: MenuItem }) {
 
 export function DriverProfile() {
   const { user, logout } = useAuth();
-  const [editing, setEditing] = useState(false);
+  const [editing,    setEditing]    = useState(false);
+  const [saving,     setSaving]     = useState(false);
+  const [showQR,     setShowQR]     = useState(false);
+  const [showDocs,   setShowDocs]   = useState(false);
+  const [docsUploaded, setDocsUploaded] = useState(0);
+  const [docsVerified, setDocsVerified] = useState(false);
+  const [profileStats, setProfileStats] = useState({ trips: 0, avgRating: 0, reviewCount: 0 });
   const [name,  setName]  = useState(user?.name ?? '');
-  const [phone, setPhone] = useState('+212 6 12 34 56 78');
-  const [bio,   setBio]   = useState('Driver based in Casablanca. Careful, punctual and friendly. 4+ years on Harizana.');
+  const [phone, setPhone] = useState('');
+  const [bio,   setBio]   = useState('');
   const [photo, setPhoto] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const initial = ((name || user?.name || 'D')[0]).toUpperCase();
 
-  const saveProfile = () => {
-    Alert.alert('Profile Saved', 'Your changes have been saved.');
+  useEffect(() => {
+    if (!user) return;
+    supabase.from('profiles')
+      .select('name, phone, bio, doc_national_id_url, doc_license_url, doc_registration_url, documents_verified')
+      .eq('id', user.id).single()
+      .then(({ data }) => {
+        if (data?.name)  setName(data.name);
+        if (data?.phone) setPhone(data.phone);
+        if (data?.bio)   setBio(data.bio);
+        const uploaded = [data?.doc_national_id_url, data?.doc_license_url, data?.doc_registration_url]
+          .filter(Boolean).length;
+        setDocsUploaded(uploaded);
+        setDocsVerified(data?.documents_verified ?? false);
+      });
+
+    Promise.all([
+      supabase.from('rides').select('id', { count: 'exact', head: true })
+        .eq('driver_id', user.id).eq('status', 'completed'),
+      supabase.from('reviews').select('rating').eq('driver_id', user.id),
+    ]).then(([tripsRes, reviewsRes]) => {
+      const reviews     = reviewsRes.data ?? [];
+      const reviewCount = reviews.length;
+      const avgRating   = reviewCount > 0
+        ? Math.round(reviews.reduce((s, r) => s + r.rating, 0) / reviewCount * 10) / 10
+        : 0;
+      setProfileStats({ trips: tripsRes.count ?? 0, avgRating, reviewCount });
+    });
+  }, [user]);
+
+  const saveProfile = async () => {
+    if (!user) return;
+    setSaving(true);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ name, phone, bio })
+      .eq('id', user.id);
+    setSaving(false);
+    if (error) { Alert.alert('Save failed', error.message); return; }
     setEditing(false);
   };
 
@@ -117,10 +162,21 @@ export function DriverProfile() {
       title: 'Account',
       items: [
         {
-          label: 'Verification', subtitle: 'ID & driving licence',
+          label: 'My QR Code', subtitle: 'Share your driver code with passengers',
+          icon: { ios: 'qrcode', android: 'qr_code' },
+          iconBg: '#8B5CF615', iconColor: '#8B5CF6',
+          onPress: () => setShowQR(true),
+        },
+        {
+          label: 'Verification',
+          subtitle: docsVerified
+            ? '✓ Verified by admin'
+            : docsUploaded === 3
+            ? '⏳ Pending review'
+            : `${docsUploaded}/3 documents uploaded`,
           icon: { ios: 'checkmark.shield.fill', android: 'verified' },
-          iconBg: C + '15', iconColor: C,
-          onPress: () => Alert.alert('Verification', 'Verification screen coming soon.'),
+          iconBg: docsVerified ? C + '15' : '#FEF3C715', iconColor: docsVerified ? C : '#D97706',
+          onPress: () => setShowDocs(true),
         },
         {
           label: 'Payment Methods', subtitle: 'Cash · Bank transfer',
@@ -174,6 +230,13 @@ export function DriverProfile() {
   ];
 
   return (
+    <>
+    <DriverQRModal visible={showQR} onClose={() => setShowQR(false)} />
+    <DocumentsModal
+      visible={showDocs}
+      onClose={() => setShowDocs(false)}
+      onStatusChange={(uploaded, verified) => { setDocsUploaded(uploaded); setDocsVerified(verified); }}
+    />
     <ScrollView style={styles.root} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
       {/* Avatar + photo change */}
@@ -199,21 +262,22 @@ export function DriverProfile() {
         {/* Rating + stats row */}
         <View style={styles.statsRow}>
           <View style={styles.statItem}>
-            <Text style={[styles.statVal, { color: C }]}>4.9</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-              <SymbolView name={{ ios: 'star.fill', android: 'star' } as any} size={10} tintColor="#FCD34D" />
-              <Text style={styles.statLabel}>Rating</Text>
-            </View>
+            <Text style={[styles.statVal, { color: '#F59E0B' }]}>
+              {profileStats.reviewCount > 0 ? profileStats.avgRating.toFixed(1) : '—'}
+            </Text>
+            <Text style={styles.statLabel}>
+              ⭐ {profileStats.reviewCount > 0 ? `${profileStats.reviewCount} reviews` : 'No reviews'}
+            </Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
-            <Text style={styles.statVal}>48</Text>
-            <Text style={styles.statLabel}>Trips</Text>
+            <Text style={[styles.statVal, { color: C }]}>{profileStats.trips}</Text>
+            <Text style={styles.statLabel}>Trips done</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
-            <Text style={[styles.statVal, { color: C }]}>2 yrs</Text>
-            <Text style={styles.statLabel}>Member</Text>
+            <Text style={[styles.statVal, { color: C }]}>Active</Text>
+            <Text style={styles.statLabel}>Status</Text>
           </View>
         </View>
       </View>
@@ -223,15 +287,16 @@ export function DriverProfile() {
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Personal Info</Text>
           <Pressable
-            style={[styles.editBtn, { backgroundColor: editing ? C : '#F1F5F9' }]}
-            onPress={() => editing ? saveProfile() : setEditing(true)}>
+            style={[styles.editBtn, { backgroundColor: editing ? C : '#F1F5F9', opacity: saving ? 0.6 : 1 }]}
+            onPress={() => editing ? saveProfile() : setEditing(true)}
+            disabled={saving}>
             <SymbolView
               name={{ ios: editing ? 'checkmark' : 'pencil', android: editing ? 'check' : 'edit' } as any}
               size={13}
               tintColor={editing ? '#fff' : '#475569'}
             />
             <Text style={[styles.editBtnText, { color: editing ? '#fff' : '#475569' }]}>
-              {editing ? 'Save' : 'Edit'}
+              {saving ? 'Saving…' : editing ? 'Save' : 'Edit'}
             </Text>
           </Pressable>
         </View>
@@ -305,6 +370,7 @@ export function DriverProfile() {
 
       <Text style={styles.version}>Harizana v1.0.0 · Driver Edition</Text>
     </ScrollView>
+    </>
   );
 }
 
