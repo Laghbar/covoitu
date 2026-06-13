@@ -41,8 +41,11 @@ export function RateModal({ visible, onClose, onSubmitted, rideId, driverId, dri
       rating,
       comment: comment.trim() || null,
     });
+    if (err) { setSaving(false); setError(err.message); return; }
+
+    // Update driver's average rating
+    await supabase.rpc('update_driver_rating', { p_driver_id: driverId });
     setSaving(false);
-    if (err) { setError(err.message); return; }
     reset();
     onSubmitted();
   };

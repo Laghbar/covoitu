@@ -302,7 +302,7 @@ export function PassengerProfile() {
         </View>
       ))}
 
-      <Text style={styles.version}>Harizana v1.0.0</Text>
+      <Text style={styles.version}>Horizon v1.0.0</Text>
     </ScrollView>
   );
 }

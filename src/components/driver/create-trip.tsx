@@ -1,12 +1,14 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Location from 'expo-location';
 import { SymbolView } from 'expo-symbols';
-import { useRef, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '@/context/auth';
 import { supabase } from '@/lib/supabase';
 import { MOROCCAN_CITIES, normalizeCity } from '@/lib/cities';
+import { calcCommission } from '@/lib/commission';
+import { DocumentsModal } from './documents';
 
 const C = '#10B981';
 
@@ -140,10 +142,12 @@ function WebField({ emoji, label, type, value, min, onChange }: {
   );
 }
 
-type Props = { onNavigate: (key: string) => void };
+type Props = { onNavigate: (key: string) => void; onWalletUpdated?: () => void };
 
-export function DriverCreateTrip({ onNavigate }: Props) {
-  const { user } = useAuth();
+export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
+  const { user, refreshUser } = useAuth();
+  const isVerified = user?.verification_status === 'verified';
+  const [docsOpen, setDocsOpen] = useState(false);
   const [from, setFrom]       = useState('');
   const [to, setTo]           = useState('');
   const [dateObj, setDateObj] = useState<Date>(new Date());
@@ -164,6 +168,21 @@ export function DriverCreateTrip({ onNavigate }: Props) {
   const [loading, setLoading] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [locLoading, setLocLoading] = useState(false);
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
+
+  const fetchWalletBalance = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('driver_wallets')
+      .select('balance')
+      .eq('driver_id', user.id)
+      .single();
+    setWalletBalance(data?.balance ?? 0);
+  }, [user]);
+
+  useEffect(() => { fetchWalletBalance(); }, [fetchWalletBalance]);
+
+  const commission = price ? calcCommission(Number(price)) : 0;
 
   const applyCity = (raw: string) => {
     setFrom(normalizeCity(raw));
@@ -243,15 +262,10 @@ export function DriverCreateTrip({ onNavigate }: Props) {
   const changeSeats = (d: number) =>
     setSeats((s) => String(Math.min(8, Math.max(1, Number(s) + d))));
 
-  const submit = async () => {
-    setSubmitError(null);
-    if (!from || !to || !datePicked || !timePicked || !price) {
-      setSubmitError('Please fill in route, date, time and price.');
-      return;
-    }
+  const doPublish = async () => {
     if (!user) { setSubmitError('Not logged in.'); return; }
-
     setLoading(true);
+    setSubmitError(null);
     const { error } = await supabase.from('rides').insert({
       driver_id:       user.id,
       from_city:       normalizeCity(from),
@@ -274,11 +288,55 @@ export function DriverCreateTrip({ onNavigate }: Props) {
     setLoading(false);
 
     if (error) {
-      setSubmitError(error.message);
+      // Parse friendly messages from trigger exceptions
+      const msg = error.message ?? '';
+      if (msg.includes('insufficient_balance')) {
+        const needed = msg.match(/([\d.]+) MAD/)?.[1] ?? commission;
+        setSubmitError(
+          `Insufficient wallet balance. You need ${needed} MAD commission reserved. Please recharge your wallet.`,
+        );
+      } else if (msg.includes('wallet_not_found')) {
+        setSubmitError('Wallet not found. Please visit the Wallet tab to set up your account.');
+      } else {
+        setSubmitError(msg);
+      }
       return;
     }
 
+    onWalletUpdated?.();
     onNavigate('rides');
+  };
+
+  const submit = () => {
+    setSubmitError(null);
+    if (!from || !to || !datePicked || !timePicked || !price) {
+      setSubmitError('Please fill in route, date, time and price.');
+      return;
+    }
+    if (!user) { setSubmitError('Not logged in.'); return; }
+
+    // Wallet balance check (client-side pre-check for fast UX; DB trigger is the real guard)
+    if (walletBalance !== null && walletBalance < commission) {
+      setSubmitError(
+        `Insufficient wallet balance. You need ${commission} MAD for the platform commission but your wallet has ${walletBalance.toFixed(0)} MAD. Please recharge your wallet.`,
+      );
+      return;
+    }
+
+    const confirmMsg = `Publishing this trip will reserve ${commission} MAD from your wallet as platform commission.\n\nAvailable: ${(walletBalance ?? 0).toFixed(0)} MAD\nCommission: ${commission} MAD\nRemaining: ${((walletBalance ?? 0) - commission).toFixed(0)} MAD`;
+
+    if (Platform.OS === 'web') {
+      if (window.confirm(confirmMsg)) doPublish();
+    } else {
+      Alert.alert(
+        'Confirm & Reserve Commission',
+        confirmMsg,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Publish Trip', onPress: doPublish },
+        ],
+      );
+    }
   };
 
   return (
@@ -521,18 +579,80 @@ export function DriverCreateTrip({ onNavigate }: Props) {
         />
       </View>
 
+      {/* Commission preview */}
+      {commission > 0 && (
+        <View style={[styles.commissionBox, walletBalance !== null && walletBalance < commission && styles.commissionBoxWarn]}>
+          <View style={styles.commissionRow}>
+            <Text style={styles.commissionLabel}>Platform commission</Text>
+            <Text style={styles.commissionValue}>{commission} MAD</Text>
+          </View>
+          {walletBalance !== null && (
+            <View style={styles.commissionRow}>
+              <Text style={styles.commissionLabel}>Your wallet balance</Text>
+              <Text style={[styles.commissionValue, walletBalance < commission && { color: '#EF4444' }]}>
+                {walletBalance.toFixed(0)} MAD
+              </Text>
+            </View>
+          )}
+          {walletBalance !== null && walletBalance < commission && (
+            <Pressable style={styles.rechargeLink} onPress={() => onNavigate('wallet')}>
+              <Text style={styles.rechargeLinkTxt}>⚡ Recharge wallet to publish →</Text>
+            </Pressable>
+          )}
+          {walletBalance !== null && walletBalance >= commission && (
+            <Text style={styles.commissionNote}>
+              This amount will be reserved when you publish. Released if you cancel before any passengers.
+            </Text>
+          )}
+        </View>
+      )}
+
       {/* Inline error */}
       {submitError && (
         <View style={styles.errorBanner}>
           <Text style={styles.errorText}>{submitError}</Text>
+          {submitError.includes('wallet') && (
+            <Pressable onPress={() => onNavigate('wallet')} style={styles.rechargeBtn}>
+              <Text style={styles.rechargeBtnTxt}>Go to Wallet →</Text>
+            </Pressable>
+          )}
         </View>
       )}
 
-      {/* Publish */}
-      <Pressable style={[styles.publishBtn, { backgroundColor: loading ? C + '80' : C }]} onPress={submit} disabled={loading}>
-        <SymbolView name={{ ios: 'checkmark.circle.fill', android: 'check_circle' } as any} size={20} tintColor="#fff" />
-        <Text style={styles.publishText}>{loading ? 'Publishing…' : 'Publish Trip'}</Text>
-      </Pressable>
+      {/* Verification gate — shown instead of Publish when driver is not verified */}
+      {!isVerified ? (
+        <View style={styles.verifGate}>
+          <Text style={styles.verifGateTitle}>
+            {user?.verification_status === 'pending_review'
+              ? '⏳ Verification Pending'
+              : '📋 Verification Required'}
+          </Text>
+          <Text style={styles.verifGateBody}>
+            {user?.verification_status === 'pending_review'
+              ? 'Your documents are under review. You can publish rides once an admin approves your account.'
+              : 'You must upload your documents and get verified before you can publish a ride.'}
+          </Text>
+          {user?.verification_status !== 'pending_review' && (
+            <Pressable style={styles.verifGateBtn} onPress={() => setDocsOpen(true)}>
+              <Text style={styles.verifGateBtnTxt}>Upload Documents →</Text>
+            </Pressable>
+          )}
+        </View>
+      ) : (
+        <Pressable
+          style={[styles.publishBtn, { backgroundColor: loading ? C + '80' : C }]}
+          onPress={submit}
+          disabled={loading || (walletBalance !== null && commission > 0 && walletBalance < commission)}
+        >
+          <SymbolView name={{ ios: 'checkmark.circle.fill', android: 'check_circle' } as any} size={20} tintColor="#fff" />
+          <Text style={styles.publishText}>{loading ? 'Publishing…' : 'Publish Trip'}</Text>
+        </Pressable>
+      )}
+
+      <DocumentsModal
+        visible={docsOpen}
+        onClose={async () => { setDocsOpen(false); await refreshUser(); }}
+      />
 
     </ScrollView>
   );
@@ -625,8 +745,31 @@ const styles = StyleSheet.create({
   doneBtn: { borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 6 },
   doneBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
 
-  errorBanner: { backgroundColor: '#FEF2F2', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#FECACA' },
+  errorBanner: { backgroundColor: '#FEF2F2', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#FECACA', gap: 10 },
   errorText: { color: '#EF4444', fontSize: 14, fontWeight: '500' },
+
+  commissionBox: {
+    backgroundColor: '#F0FDF4', borderRadius: 14, padding: 14, gap: 8,
+    borderWidth: 1, borderColor: '#BBF7D0',
+  },
+  commissionBoxWarn: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
+  commissionRow:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  commissionLabel:{ fontSize: 13, color: '#64748B', fontWeight: '500' },
+  commissionValue:{ fontSize: 14, fontWeight: '800', color: '#1E293B' },
+  commissionNote: { fontSize: 12, color: '#64748B', lineHeight: 17 },
+  rechargeLink:   { alignSelf: 'flex-start' },
+  rechargeLinkTxt:{ fontSize: 13, color: '#EF4444', fontWeight: '700' },
+  rechargeBtn:    { backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8, alignSelf: 'flex-start' },
+  rechargeBtnTxt: { color: '#fff', fontSize: 13, fontWeight: '700' },
+
+  verifGate: {
+    backgroundColor: '#FFFBEB', borderRadius: 16, padding: 20, gap: 10,
+    borderWidth: 1, borderColor: '#FDE68A',
+  },
+  verifGateTitle: { fontSize: 15, fontWeight: '800', color: '#92400E' },
+  verifGateBody:  { fontSize: 13, color: '#78350F', lineHeight: 19 },
+  verifGateBtn:   { backgroundColor: '#F59E0B', borderRadius: 12, paddingVertical: 11, alignItems: 'center', marginTop: 4 },
+  verifGateBtnTxt:{ color: '#fff', fontSize: 14, fontWeight: '700' },
 
   locBtn: { alignSelf: 'flex-start' },
   locBtnText: { fontSize: 13, color: C, fontWeight: '600' },

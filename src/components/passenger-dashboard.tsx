@@ -9,16 +9,19 @@ import { PassengerSearch }     from './passenger/search';
 import { PassengerRideDetail } from './passenger/ride-detail';
 import { PassengerBookings }   from './passenger/bookings';
 import { PassengerProfile }    from './passenger/profile';
+import { PassengerRequests }   from './passenger/my-requests';
+import { CreateRequestModal }  from './passenger/create-request';
 import { QRScannerModal }      from './passenger/qr-scanner';
 import { DriverPublicProfile } from './passenger/driver-public-profile';
 
 export const PASSENGER_COLOR = '#3B82F6';
 
-type TabKey = 'home' | 'search' | 'bookings' | 'profile';
+type TabKey = 'home' | 'search' | 'requests' | 'bookings' | 'profile';
 
 const TABS: { key: TabKey; emoji: string; label: string }[] = [
   { key: 'home',     emoji: '🏠', label: 'Home'     },
   { key: 'search',   emoji: '🔍', label: 'Search'   },
+  { key: 'requests', emoji: '📋', label: 'Requests' },
   { key: 'bookings', emoji: '🎫', label: 'Bookings' },
   { key: 'profile',  emoji: '👤', label: 'Profile'  },
 ];
@@ -50,7 +53,7 @@ function AppBar({
         <View style={[styles.appLogo, { backgroundColor: PASSENGER_COLOR }]}>
           <Text style={{ fontSize: 12 }}>🚌</Text>
         </View>
-        <Text style={styles.appName}>Harizana</Text>
+        <Text style={styles.appName}>Horizon</Text>
         <View style={[styles.rolePill, { backgroundColor: PASSENGER_COLOR + '18' }]}>
           <Text style={[styles.roleText, { color: PASSENGER_COLOR }]}>Passenger</Text>
         </View>
@@ -177,6 +180,7 @@ export default function PassengerDashboard() {
   const [toast,           setToast]           = useState<{ msg: string; key: number; type?: 'accept' | 'cancel' } | null>(null);
   const [qrOpen,          setQrOpen]          = useState(false);
   const [selectedDriver,  setSelectedDriver]  = useState<string | null>(null);
+  const [createReqOpen,   setCreateReqOpen]   = useState(false);
 
   const tabRef = useRef(tab);
   useEffect(() => { tabRef.current = tab; }, [tab]);
@@ -226,6 +230,10 @@ export default function PassengerDashboard() {
           setToast({ msg: n.body, key: Date.now(), type: 'accept' });
         } else if (n.type === 'ride_cancelled') {
           setToast({ msg: n.body, key: Date.now(), type: 'cancel' });
+        } else if (n.type === 'rate_driver') {
+          // Switch to bookings tab so the rate button is visible
+          setTab('bookings');
+          setToast({ msg: n.body, key: Date.now(), type: 'accept' });
         }
         if (tabRef.current === 'bookings') {
           markNotifsSeen();
@@ -273,6 +281,13 @@ export default function PassengerDashboard() {
         />
       )}
 
+      {/* Create request modal */}
+      <CreateRequestModal
+        visible={createReqOpen}
+        onClose={() => setCreateReqOpen(false)}
+        onCreated={() => setTab('requests')}
+      />
+
       {/* QR scanner modal */}
       <QRScannerModal
         visible={qrOpen}
@@ -293,6 +308,7 @@ export default function PassengerDashboard() {
           <>
             {tab === 'home'     && <PassengerHome     onNavigate={navigate} />}
             {tab === 'search'   && <PassengerSearch   onNavigate={navigate} initialQuery={searchQuery} onScanQR={() => setQrOpen(true)} />}
+            {tab === 'requests' && <PassengerRequests onCreateNew={() => setCreateReqOpen(true)} />}
             {tab === 'bookings' && <PassengerBookings onNavigate={navigate} />}
             {tab === 'profile'  && <PassengerProfile  />}
           </>

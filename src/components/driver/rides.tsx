@@ -140,9 +140,16 @@ export function DriverRides({ onNavigate }: Props) {
   }, [user, fetchRides]);
 
   const completeRide = async (id: string) => {
-    const { error } = await supabase.from('rides').update({ status: 'completed' }).eq('id', id);
-    if (error) return;
+    const { error } = await supabase.rpc('complete_ride', {
+      p_ride_id:   id,
+      p_driver_id: user!.id,
+    });
+    if (error) {
+      Alert.alert('Error', error.message);
+      return;
+    }
     setRides(prev => prev.map(r => r.id === id ? { ...r, status: 'completed' as Status } : r));
+    Alert.alert('Ride Completed! 🎉', 'Commission transferred and passengers notified to rate their trip.');
   };
 
   const cancelRide = async (id: string) => {

@@ -12,7 +12,7 @@ export type Props = {
 
 function parseCode(raw: string): string | null {
   const t = raw.trim();
-  if (t.startsWith('harizana-driver:')) return t.split('harizana-driver:')[1] || null;
+  if (t.startsWith('horizon-driver:')) return t.split('horizon-driver:')[1] || null;
   if (/^[0-9a-f-]{36}$/i.test(t)) return t;
   return null;
 }
@@ -36,7 +36,7 @@ function WebScanner({ onDriverFound, onClose }: { onDriverFound: (id: string) =>
         style={web.input}
         value={code}
         onChangeText={(t) => { setCode(t); setErr(''); }}
-        placeholder="harizana-driver:xxxxxxxx-xxxx-…"
+        placeholder="horizon-driver:xxxxxxxx-xxxx-…"
         placeholderTextColor="#94A3B8"
         autoFocus
       />

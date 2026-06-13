@@ -91,12 +91,19 @@ export function DocumentsModal({ visible, onClose, onStatusChange }: Props) {
     if (dbErr) {
       setError(`Save failed: ${dbErr.message}`);
     } else {
-      setUrls(prev => {
-        const next = { ...prev, [docType]: publicUrl };
-        const uploaded = Object.values(next).filter(Boolean).length;
-        onStatusChange?.(uploaded, verified);
-        return next;
-      });
+      const newUrls: UrlMap = { ...urls, [docType]: publicUrl };
+      const uploaded = Object.values(newUrls).filter(Boolean).length;
+      setUrls(newUrls);
+      onStatusChange?.(uploaded, verified);
+
+      // Auto-submit for review when all 3 docs are uploaded
+      if (uploaded === 3) {
+        await supabase
+          .from('driver_verifications')
+          .update({ status: 'pending_review', submitted_at: new Date().toISOString() })
+          .eq('driver_id', user.id)
+          .in('status', ['unsubmitted', 'rejected']);
+      }
     }
     setUploading(prev => ({ ...prev, [docType]: false }));
   };

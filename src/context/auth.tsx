@@ -1,18 +1,36 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
 import { Role } from '@/lib/api';
+import { registerPushToken } from '@/lib/push-notifications';
 
-export type User = { id: string; email: string; name: string; role: Role; is_admin: boolean; suspended: boolean };
+export type VerificationStatus = 'unsubmitted' | 'pending_review' | 'verified' | 'rejected';
+
+export type User = {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  is_admin: boolean;
+  suspended: boolean;
+  phone: string | null;
+  phone_verified: boolean;
+  email_verified: boolean;
+  verification_status: VerificationStatus | null; // drivers only
+};
 
 type AuthContextType = {
   user: User | null;
   isLoading: boolean;
   showWelcome: boolean;
+  loginError: string | null;
+  clearLoginError: () => void;
   dismissWelcome: () => void;
-  login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string, role: Role) => Promise<void>;
+  login: (email: string, password: string, expectedRole?: Role) => Promise<void>;
+  register: (name: string, email: string, phone: string, password: string, role: Role) => Promise<void>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -21,21 +39,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser]               = useState<User | null>(null);
   const [isLoading, setIsLoading]     = useState(true);
   const [showWelcome, setShowWelcome] = useState(false);
+  const [loginError, setLoginError]   = useState<string | null>(null);
+
+  // Stores the expected role during a login attempt so onAuthStateChange can check it
+  const pendingRole = useRef<Role | null>(null);
 
   async function toUser(supaUser: any): Promise<User | null> {
     if (!supaUser) return null;
+    const role = (supaUser.user_metadata?.role ?? 'passenger') as Role;
+
+    const metaAdmin = supaUser.user_metadata?.is_admin === true;
+
     const { data: profile } = await supabase
       .from('profiles')
-      .select('is_admin, suspended')
+      .select('is_admin, suspended, phone, phone_verified')
       .eq('id', supaUser.id)
       .single();
+
+    let verification_status: VerificationStatus | null = null;
+    if (role === 'driver') {
+      const { data: verif } = await supabase
+        .from('driver_verifications')
+        .select('status')
+        .eq('driver_id', supaUser.id)
+        .single();
+      verification_status = (verif?.status ?? 'unsubmitted') as VerificationStatus;
+    }
+
     return {
-      id:        supaUser.id,
-      email:     supaUser.email ?? '',
-      name:      supaUser.user_metadata?.name ?? supaUser.email ?? '',
-      role:      (supaUser.user_metadata?.role ?? 'passenger') as Role,
-      is_admin:  profile?.is_admin  ?? false,
-      suspended: profile?.suspended ?? false,
+      id:                  supaUser.id,
+      email:               supaUser.email ?? '',
+      name:                supaUser.user_metadata?.name ?? supaUser.email ?? '',
+      role,
+      is_admin:            metaAdmin || (profile?.is_admin ?? false),
+      suspended:           profile?.suspended    ?? false,
+      phone:               profile?.phone        ?? null,
+      phone_verified:      profile?.phone_verified ?? false,
+      email_verified:      !!supaUser.email_confirmed_at,
+      verification_status,
     };
   }
 
@@ -46,19 +87,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setUser(await toUser(session?.user ?? null));
+      const u = await toUser(session?.user ?? null);
+
+      // Role / admin check — runs inside onAuthStateChange so the error
+      // survives any auth-screen re-mount caused by the sign-out
+      if (u && pendingRole.current) {
+        if (u.is_admin && Platform.OS === 'web') {
+          // Admin tried to log in through the regular user flow on web
+          pendingRole.current = null;
+          setLoginError('This is an admin account. Please use the Admin Portal.');
+          await supabase.auth.signOut();
+          return;
+        }
+        if (!u.is_admin && u.role !== pendingRole.current) {
+          // Regular user selected the wrong role
+          const actualLabel = u.role === 'driver' ? 'Driver' : 'Passenger';
+          pendingRole.current = null;
+          setLoginError(
+            `This account is registered as a ${actualLabel}. ` +
+            `Go back and select "${actualLabel}" to sign in.`
+          );
+          await supabase.auth.signOut();
+          return;
+        }
+      }
+
+      pendingRole.current = null;
+      setUser(u);
+      if (u) registerPushToken(u.id).catch(() => {});
     });
 
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
+  const clearLoginError = useCallback(() => setLoginError(null), []);
+
+  const login = useCallback(async (email: string, password: string, expectedRole?: Role) => {
+    setLoginError(null);
+    pendingRole.current = expectedRole ?? null;
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message);
-    // onAuthStateChange will set the user
+    if (error) {
+      pendingRole.current = null;
+      throw new Error(error.message);
+    }
+    // onAuthStateChange handles role validation and calls setUser
   }, []);
 
-  const register = useCallback(async (name: string, email: string, password: string, role: Role) => {
+  const register = useCallback(async (name: string, email: string, phone: string, password: string, role: Role) => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -66,14 +141,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     if (error) throw new Error(error.message);
 
-    // No session means email confirmation is still ON in Supabase
     if (!data.session) {
-      throw new Error('Account created! Please check your email to confirm it, then sign in.');
+      throw new Error('CHECK_EMAIL');
     }
 
-    // Upsert profile row (don't rely on trigger alone)
     if (data.user) {
-      await supabase.from('profiles').upsert({ id: data.user.id, name, role }, { onConflict: 'id' });
+      await supabase.from('profiles').upsert(
+        { id: data.user.id, name, role, phone: phone || null },
+        { onConflict: 'id' },
+      );
     }
 
     setShowWelcome(true);
@@ -92,8 +168,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    const { data } = await supabase.auth.getUser();
+    setUser(await toUser(data.user ?? null));
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, showWelcome, dismissWelcome, login, register, logout }}>
+    <AuthContext.Provider value={{
+      user, isLoading, showWelcome, loginError,
+      clearLoginError, dismissWelcome, login, register, logout, refreshUser,
+    }}>
       {children}
     </AuthContext.Provider>
   );

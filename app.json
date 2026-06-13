@@ -1,17 +1,17 @@
 {
   "expo": {
-    "name": "Harizana",
+    "name": "Horizon",
     "slug": "Harizana",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "harizana",
+    "scheme": "horizon",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
     },
     "android": {
-      "package": "com.harizana.app",
+      "package": "com.horizon.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -29,8 +29,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Harizana needs access to your photos to set a profile picture.",
-          "cameraPermission": "Harizana needs camera access to take a profile picture."
+          "photosPermission": "Horizon needs access to your photos to set a profile picture.",
+          "cameraPermission": "Horizon needs camera access to take a profile picture."
         }
       ],
       [
@@ -51,13 +51,21 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Harizana needs your location to auto-fill your departure city."
+          "locationWhenInUsePermission": "Horizon needs your location to auto-fill your departure city."
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "Harizana needs camera access to scan driver QR codes."
+          "cameraPermission": "Horizon needs camera access to scan driver QR codes."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#3B82F6",
+          "defaultChannel": "default"
         }
       ]
     ],

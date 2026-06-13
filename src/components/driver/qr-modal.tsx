@@ -9,10 +9,10 @@ type Props = { visible: boolean; onClose: () => void };
 
 export function DriverQRModal({ visible, onClose }: Props) {
   const { user } = useAuth();
-  const driverCode = `harizana-driver:${user?.id ?? ''}`;
+  const driverCode = `horizon-driver:${user?.id ?? ''}`;
 
   const handleShare = async () => {
-    const msg = `Find my rides on Harizana!\nPaste this code in the app:\n${driverCode}`;
+    const msg = `Find my rides on Horizon!\nPaste this code in the app:\n${driverCode}`;
     if (Platform.OS === 'web') {
       try { await navigator.clipboard.writeText(driverCode); alert('Driver code copied! Share it with passengers to paste in the app.'); }
       catch { alert(driverCode); }

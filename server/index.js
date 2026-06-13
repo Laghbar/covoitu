@@ -14,5 +14,5 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`Harizana server → http://localhost:${PORT}`);
+  console.log(`Horizon server → http://localhost:${PORT}`);
 });

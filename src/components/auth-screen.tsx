@@ -49,15 +49,17 @@ type Props = {
 
 export function AuthScreen({ role, onChangeRole }: Props) {
   const theme = useTheme();
-  const { login, register } = useAuth();
+  const { login, register, loginError, clearLoginError } = useAuth();
   const meta = ROLE_META[role];
 
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [emailSent, setEmailSent] = useState(false);
   const [containerWidth, setContainerWidth] = useState(0);
 
   const indicatorX = useSharedValue(0);
@@ -87,41 +89,37 @@ export function AuthScreen({ role, onChangeRole }: Props) {
         });
       }
       setName("");
+      setPhone("");
       setEmail("");
       setPassword("");
+      setEmailSent(false);
     },
     [containerWidth],
   );
 
   const handleSubmit = async () => {
     setError(null);
-    if (mode === "register" && !name.trim()) {
-      setError("Please enter your full name.");
-      return;
+    if (mode === "register") {
+      if (!name.trim()) { setError("Please enter your full name."); return; }
+      if (!phone.trim()) { setError("Please enter your phone number."); return; }
     }
-    if (!email.trim()) {
-      setError("Please enter your email address.");
-      return;
-    }
-    if (!password) {
-      setError("Please enter your password.");
-      return;
-    }
+    if (!email.trim()) { setError("Please enter your email address."); return; }
+    if (!password)     { setError("Please enter your password."); return; }
 
     setLoading(true);
     try {
       if (mode === "login") {
-        await login(email.trim(), password);
+        await login(email.trim(), password, role);
       } else {
-        await register(name.trim(), email.trim(), password, role);
+        await register(name.trim(), email.trim(), phone.trim(), password, role);
       }
-    } catch (err) {
-      console.error("Auth error:", err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Something went wrong. Please try again.",
-      );
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : "Something went wrong.";
+      if (msg === "CHECK_EMAIL") {
+        setEmailSent(true);
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -154,7 +152,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                 <ThemedText style={styles.logoLetter}>H</ThemedText>
               </View>
               <ThemedText type="title" style={styles.appName}>
-                Harizana
+                Horizon
               </ThemedText>
 
               {/* Role badge */}
@@ -241,30 +239,53 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                 ))}
               </View>
 
-              {/* Form */}
-              <View style={styles.form}>
-                {mode === "register" && (
-                  <View>
-                    <ThemedText
-                      type="small"
-                      themeColor="textSecondary"
-                      style={styles.label}
-                    >
-                      Full name
+              {/* Email sent confirmation */}
+              {emailSent && (
+                <View style={styles.successBox}>
+                  <ThemedText style={styles.successText}>
+                    ✅ Account created! Check your email to confirm it, then sign in.
+                  </ThemedText>
+                  <Pressable onPress={() => switchMode("login")}>
+                    <ThemedText style={[styles.footerLink, { color: meta.color, marginTop: 6 }]}>
+                      Go to Sign In →
                     </ThemedText>
-                    <TextInput
-                      style={inputStyle}
-                      placeholder="Jane Doe"
-                      placeholderTextColor={theme.textSecondary}
-                      value={name}
-                      onChangeText={(v) => {
-                        setName(v);
-                        setError(null);
-                      }}
-                      autoCapitalize="words"
-                      autoCorrect={false}
-                    />
-                  </View>
+                  </Pressable>
+                </View>
+              )}
+
+              {/* Form */}
+              {!emailSent && <View style={styles.form}>
+                {mode === "register" && (
+                  <>
+                    <View>
+                      <ThemedText type="small" themeColor="textSecondary" style={styles.label}>
+                        Full name
+                      </ThemedText>
+                      <TextInput
+                        style={inputStyle}
+                        placeholder="Youssef El Amrani"
+                        placeholderTextColor={theme.textSecondary}
+                        value={name}
+                        onChangeText={(v) => { setName(v); setError(null); }}
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                      />
+                    </View>
+                    <View>
+                      <ThemedText type="small" themeColor="textSecondary" style={styles.label}>
+                        Phone number
+                      </ThemedText>
+                      <TextInput
+                        style={inputStyle}
+                        placeholder="+212 6XX XXX XXX"
+                        placeholderTextColor={theme.textSecondary}
+                        value={phone}
+                        onChangeText={(v) => { setPhone(v); setError(null); }}
+                        keyboardType="phone-pad"
+                        autoCorrect={false}
+                      />
+                    </View>
+                  </>
                 )}
 
                 <View>
@@ -283,6 +304,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                     onChangeText={(v) => {
                       setEmail(v);
                       setError(null);
+                      clearLoginError();
                     }}
                     keyboardType="email-address"
                     autoCapitalize="none"
@@ -306,6 +328,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                     onChangeText={(v) => {
                       setPassword(v);
                       setError(null);
+                      clearLoginError();
                     }}
                     secureTextEntry
                   />
@@ -322,9 +345,9 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                   </Pressable>
                 )}
 
-                {error && (
+                {(error || loginError) && (
                   <View style={styles.errorBox}>
-                    <ThemedText style={styles.errorText}>{error}</ThemedText>
+                    <ThemedText style={styles.errorText}>{error || loginError}</ThemedText>
                   </View>
                 )}
 
@@ -345,7 +368,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                     </ThemedText>
                   )}
                 </Pressable>
-              </View>
+              </View>}
 
               {/* Footer */}
               <View style={styles.footer}>
@@ -492,4 +515,14 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.one,
   },
   footerLink: { fontWeight: "600" },
+
+  successBox: {
+    backgroundColor: "#f0fdf4",
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#bbf7d0",
+    gap: 4,
+  },
+  successText: { color: "#166534", fontSize: 14, lineHeight: 20 },
 });

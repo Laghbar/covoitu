@@ -4,31 +4,39 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
 import { supabase } from '@/lib/supabase';
-import { DriverHome }             from './driver/home';
-import { DriverCreateTrip }       from './driver/create-trip';
-import { DriverRides }            from './driver/rides';
-import { DriverProfile }          from './driver/profile';
-import { NotificationsPanel }     from './driver/notifications-panel';
+import { DriverHome }                from './driver/home';
+import { DriverCreateTrip }         from './driver/create-trip';
+import { DriverRides }              from './driver/rides';
+import { DriverProfile }            from './driver/profile';
+import { DriverWallet }             from './driver/wallet';
+import { DriverPassengerRequests }  from './driver/passenger-requests';
+import { NotificationsPanel }       from './driver/notifications-panel';
 
 export const DRIVER_COLOR = '#10B981';
 
-type TabKey = 'home' | 'create' | 'rides' | 'profile';
+type TabKey = 'home' | 'create' | 'rides' | 'requests' | 'wallet' | 'profile';
 
 const TABS: { key: TabKey; emoji: string; label: string }[] = [
-  { key: 'home',   emoji: '🏠', label: 'Home'     },
-  { key: 'create', emoji: '➕', label: 'New Trip'  },
-  { key: 'rides',  emoji: '🚗', label: 'My Rides' },
-  { key: 'profile',emoji: '👤', label: 'Profile'  },
+  { key: 'home',     emoji: '🏠', label: 'Home'    },
+  { key: 'create',   emoji: '➕', label: 'Trip'    },
+  { key: 'rides',    emoji: '🚗', label: 'Rides'   },
+  { key: 'requests', emoji: '📋', label: 'Requests'},
+  { key: 'wallet',   emoji: '💰', label: 'Wallet'  },
+  { key: 'profile',  emoji: '👤', label: 'Profile' },
 ];
 
 function AppBar({
   pendingCount,
+  walletBalance,
   onBellPress,
   onAvatarPress,
+  onWalletPress,
 }: {
   pendingCount: number;
+  walletBalance: number | null;
   onBellPress: () => void;
   onAvatarPress: () => void;
+  onWalletPress: () => void;
 }) {
   const { user } = useAuth();
   const initial  = (user?.name?.[0] ?? 'D').toUpperCase();
@@ -39,12 +47,17 @@ function AppBar({
         <View style={[styles.appLogo, { backgroundColor: DRIVER_COLOR }]}>
           <Text style={{ fontSize: 12 }}>🚗</Text>
         </View>
-        <Text style={styles.appName}>Harizana</Text>
+        <Text style={styles.appName}>Horizon</Text>
         <View style={[styles.rolePill, { backgroundColor: DRIVER_COLOR + '18' }]}>
           <Text style={[styles.roleText, { color: DRIVER_COLOR }]}>Driver</Text>
         </View>
       </View>
       <View style={styles.appBarRight}>
+        {walletBalance !== null && (
+          <Pressable style={styles.walletChip} onPress={onWalletPress}>
+            <Text style={styles.walletChipTxt}>💰 {walletBalance.toFixed(0)} MAD</Text>
+          </Pressable>
+        )}
         <Pressable style={styles.bellWrap} onPress={onBellPress}>
           <Text style={styles.bellIcon}>🔔</Text>
           {pendingCount > 0 && (
@@ -92,6 +105,7 @@ export default function DriverDashboard() {
   const [tab,            setTab]            = useState<TabKey>('home');
   const [pendingCount,   setPendingCount]   = useState(0);
   const [panelVisible,   setPanelVisible]   = useState(false);
+  const [walletBalance,  setWalletBalance]  = useState<number | null>(null);
 
   const fetchPendingCount = useCallback(async () => {
     if (!user) return;
@@ -106,7 +120,21 @@ export default function DriverDashboard() {
     setPendingCount(count ?? 0);
   }, [user]);
 
+  const fetchWalletBalance = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('driver_wallets')
+      .select('balance')
+      .eq('driver_id', user.id)
+      .single();
+    setWalletBalance(data?.balance ?? 0);
+  }, [user]);
+
   useEffect(() => { fetchPendingCount(); }, [fetchPendingCount]);
+  useEffect(() => { fetchWalletBalance(); }, [fetchWalletBalance]);
+
+  // Refresh wallet balance whenever wallet tab is visited
+  useEffect(() => { if (tab === 'wallet') fetchWalletBalance(); }, [tab, fetchWalletBalance]);
 
   useEffect(() => {
     if (!user) return;
@@ -124,16 +152,20 @@ export default function DriverDashboard() {
       <View style={[styles.topSafe, { paddingTop: insets.top }]}>
         <AppBar
           pendingCount={pendingCount}
+          walletBalance={walletBalance}
           onBellPress={() => setPanelVisible(true)}
           onAvatarPress={() => setTab('profile')}
+          onWalletPress={() => setTab('wallet')}
         />
       </View>
 
       <View style={{ flex: 1 }}>
-        {tab === 'home'    && <DriverHome       onNavigate={navigate} />}
-        {tab === 'create'  && <DriverCreateTrip onNavigate={navigate} />}
-        {tab === 'rides'   && <DriverRides      onNavigate={navigate} />}
-        {tab === 'profile' && <DriverProfile />}
+        {tab === 'home'     && <DriverHome                onNavigate={navigate} />}
+        {tab === 'create'   && <DriverCreateTrip          onNavigate={navigate} onWalletUpdated={fetchWalletBalance} />}
+        {tab === 'rides'    && <DriverRides               onNavigate={navigate} />}
+        {tab === 'requests' && <DriverPassengerRequests />}
+        {tab === 'wallet'   && <DriverWallet />}
+        {tab === 'profile'  && <DriverProfile />}
       </View>
 
       <View style={{ paddingBottom: insets.bottom, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0' }}>
@@ -168,6 +200,12 @@ const styles = StyleSheet.create({
   appName:  { fontSize: 17, fontWeight: '800', color: '#1E293B', letterSpacing: -0.3 },
   rolePill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   roleText: { fontSize: 11, fontWeight: '700' },
+
+  walletChip: {
+    backgroundColor: DRIVER_COLOR + '18', borderRadius: 20,
+    paddingHorizontal: 10, paddingVertical: 5,
+  },
+  walletChipTxt: { fontSize: 12, fontWeight: '700', color: DRIVER_COLOR },
 
   bellWrap: { position: 'relative', padding: 4 },
   bellIcon: { fontSize: 20 },

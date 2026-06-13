@@ -42,7 +42,7 @@ function downloadReceipt(tx: Transaction) {
       `Amount     : ${tx.amount} MAD`,
       `Status     : ${tx.status.toUpperCase()}`,
       '============================',
-      'Thank you for using Harizana!',
+      'Thank you for using Horizon!',
     ].join('\n');
     const blob = new Blob([lines], { type: 'text/plain' });
     const url  = URL.createObjectURL(blob);

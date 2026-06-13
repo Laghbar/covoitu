@@ -3,22 +3,23 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
-import { AdminOverview } from './admin/overview';
-import { AdminUsers }    from './admin/users';
-import { AdminRides }    from './admin/rides';
-import { AdminPayments } from './admin/payments';
-import { AdminReviews }  from './admin/reviews';
+import { AdminOverview }       from './admin/overview';
+import { AdminUsers }          from './admin/users';
+import { AdminRides }          from './admin/rides';
+import { AdminPayments }       from './admin/payments';
+import { AdminReviews }        from './admin/reviews';
+import { AdminVerifications }  from './admin/verifications';
 
 const C = '#6366F1';
 
-type TabKey = 'overview' | 'users' | 'rides' | 'payments' | 'reviews';
+type TabKey = 'overview' | 'users' | 'verifications' | 'rides' | 'payments';
 
 const TABS: { key: TabKey; label: string; emoji: string }[] = [
-  { key: 'overview',  label: 'Overview',  emoji: '📊' },
-  { key: 'users',     label: 'Users',     emoji: '👥' },
-  { key: 'rides',     label: 'Rides',     emoji: '🚗' },
-  { key: 'payments',  label: 'Payments',  emoji: '💳' },
-  { key: 'reviews',   label: 'Reviews',   emoji: '⭐' },
+  { key: 'overview',       label: 'Overview', emoji: '📊' },
+  { key: 'users',          label: 'Users',    emoji: '👥' },
+  { key: 'verifications',  label: 'Verify',   emoji: '🛡️' },
+  { key: 'rides',          label: 'Rides',    emoji: '🚗' },
+  { key: 'payments',       label: 'Payments', emoji: '💳' },
 ];
 
 export default function AdminDashboard() {
@@ -42,19 +43,24 @@ export default function AdminDashboard() {
               <Text style={styles.adminPillText}>Admin</Text>
             </View>
           </View>
-          <Pressable onPress={logout} style={[styles.avatarBtn, { backgroundColor: C }]}>
-            <Text style={styles.avatarText}>{initial}</Text>
-          </Pressable>
+          <View style={styles.appBarRight}>
+            <Pressable onPress={logout} style={styles.signOutBtn}>
+              <Text style={styles.signOutTxt}>Sign Out</Text>
+            </Pressable>
+            <View style={[styles.avatarBtn, { backgroundColor: C }]}>
+              <Text style={styles.avatarText}>{initial}</Text>
+            </View>
+          </View>
         </View>
       </View>
 
       {/* Page content */}
       <View style={{ flex: 1 }}>
-        {tab === 'overview'  && <AdminOverview />}
-        {tab === 'users'     && <AdminUsers />}
-        {tab === 'rides'     && <AdminRides />}
-        {tab === 'payments'  && <AdminPayments />}
-        {tab === 'reviews'   && <AdminReviews />}
+        {tab === 'overview'       && <AdminOverview />}
+        {tab === 'users'          && <AdminUsers />}
+        {tab === 'verifications'  && <AdminVerifications />}
+        {tab === 'rides'          && <AdminRides />}
+        {tab === 'payments'       && <AdminPayments />}
       </View>
 
       {/* Bottom tab bar */}
@@ -102,8 +108,11 @@ const styles = StyleSheet.create({
     backgroundColor: C + '18',
   },
   adminPillText: { fontSize: 11, fontWeight: '700', color: C },
-  avatarBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  appBarRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  signOutBtn:  { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, backgroundColor: '#FEE2E2' },
+  signOutTxt:  { fontSize: 12, fontWeight: '700', color: '#EF4444' },
+  avatarBtn:   { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  avatarText:  { color: '#fff', fontSize: 14, fontWeight: '700' },
 
   tabBar: {
     flexDirection: 'row',
