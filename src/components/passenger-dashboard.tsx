@@ -19,11 +19,10 @@ export const PASSENGER_COLOR = '#3B82F6';
 type TabKey = 'home' | 'search' | 'requests' | 'bookings' | 'profile';
 
 const TABS: { key: TabKey; emoji: string; label: string }[] = [
-  { key: 'home',     emoji: '🏠', label: 'Home'     },
-  { key: 'search',   emoji: '🔍', label: 'Search'   },
-  { key: 'requests', emoji: '📋', label: 'Requests' },
-  { key: 'bookings', emoji: '🎫', label: 'Bookings' },
-  { key: 'profile',  emoji: '👤', label: 'Profile'  },
+  { key: 'home',     emoji: '🔍', label: 'Rechercher' },
+  { key: 'requests', emoji: '➕', label: 'Publier'    },
+  { key: 'bookings', emoji: '🗺️', label: 'Vos trajets'},
+  { key: 'profile',  emoji: '👤', label: 'Profil'     },
 ];
 
 export type RideItem = {
@@ -48,15 +47,12 @@ function AppBar({
 
   return (
     <View style={styles.appBar}>
-      {/* Left: logo + name + role */}
+      {/* Left: logo + name */}
       <View style={styles.appBarLeft}>
         <View style={[styles.appLogo, { backgroundColor: PASSENGER_COLOR }]}>
           <Text style={{ fontSize: 12 }}>🚌</Text>
         </View>
         <Text style={styles.appName}>Horizon</Text>
-        <View style={[styles.rolePill, { backgroundColor: PASSENGER_COLOR + '18' }]}>
-          <Text style={[styles.roleText, { color: PASSENGER_COLOR }]}>Passenger</Text>
-        </View>
       </View>
 
       {/* Right: bell + avatar */}
@@ -91,21 +87,30 @@ function BottomTabBar({
       {TABS.map(tab => {
         const focused  = tab.key === active;
         const hasBadge = tab.key === 'bookings' && bookingCount > 0;
+        const isPrimary = tab.key === 'requests'; // "Publier" gets accent treatment
         return (
           <Pressable
             key={tab.key}
             style={styles.tabItem}
             onPress={() => onChange(tab.key)}>
-            {focused && <View style={[styles.tabActiveBar, { backgroundColor: PASSENGER_COLOR }]} />}
             <View style={styles.tabIconWrap}>
-              <Text style={[styles.tabEmoji, focused && styles.tabEmojiActive]}>{tab.emoji}</Text>
+              {isPrimary ? (
+                <View style={[styles.tabPublishBtn, focused && { backgroundColor: PASSENGER_COLOR }]}>
+                  <Text style={[styles.tabEmoji, { fontSize: 20, opacity: 1 }]}>{tab.emoji}</Text>
+                </View>
+              ) : (
+                <Text style={[styles.tabEmoji, focused && styles.tabEmojiActive]}>{tab.emoji}</Text>
+              )}
               {hasBadge && (
                 <View style={styles.tabBadge}>
                   <Text style={styles.tabBadgeText}>{bookingCount > 9 ? '9+' : bookingCount}</Text>
                 </View>
               )}
             </View>
-            <Text style={[styles.tabLabel, focused && { color: PASSENGER_COLOR, fontWeight: '700' }]}>
+            <Text style={[
+              styles.tabLabel,
+              focused && { color: PASSENGER_COLOR, fontWeight: '700' },
+            ]}>
               {tab.label}
             </Text>
           </Pressable>
@@ -248,7 +253,8 @@ export default function PassengerDashboard() {
   const navigate = (key: string, payload?: any) => {
     if (key === 'ride-detail') { setSelectedRide(payload); return; }
     if (key === 'driver-profile') { setSelectedDriver(payload); return; }
-    if (key === 'search' && payload) { setSearchQuery(payload); }
+    if (key === 'requests') { setTab('requests'); return; }
+    if (key === 'search' && payload) { setSearchQuery(payload); setTab('home'); return; }
     setSelectedRide(null);
     setSelectedDriver(null);
     setTab(key as TabKey);
@@ -256,11 +262,12 @@ export default function PassengerDashboard() {
 
   const changeTab = (k: TabKey) => {
     setSelectedRide(null);
+    if (k === 'home') setSearchQuery(null);
     setTab(k);
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+    <View style={{ flex: 1, backgroundColor: '#F0F4FF' }}>
       {/* Top app bar */}
       <View style={[styles.topSafe, { paddingTop: insets.top }]}>
         <AppBar
@@ -306,9 +313,15 @@ export default function PassengerDashboard() {
           <PassengerRideDetail ride={selectedRide} onBack={() => setSelectedRide(null)} onNavigate={navigate} />
         ) : (
           <>
-            {tab === 'home'     && <PassengerHome     onNavigate={navigate} />}
-            {tab === 'search'   && <PassengerSearch   onNavigate={navigate} initialQuery={searchQuery} onScanQR={() => setQrOpen(true)} />}
-            {tab === 'requests' && <PassengerRequests onCreateNew={() => setCreateReqOpen(true)} />}
+            {tab === 'home'  && !searchQuery && <PassengerHome onNavigate={navigate} />}
+            {tab === 'home'  && searchQuery  && (
+              <PassengerSearch
+                onNavigate={navigate}
+                initialQuery={searchQuery}
+                onScanQR={() => setQrOpen(true)}
+              />
+            )}
+{tab === 'requests' && <PassengerRequests onCreateNew={() => setCreateReqOpen(true)} />}
             {tab === 'bookings' && <PassengerBookings onNavigate={navigate} />}
             {tab === 'profile'  && <PassengerProfile  />}
           </>
@@ -365,23 +378,23 @@ const styles = StyleSheet.create({
   /* Bottom tab bar */
   tabBar: {
     flexDirection: 'row',
-    paddingTop: 6,
-    paddingBottom: Platform.OS === 'ios' ? 0 : 6,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'ios' ? 0 : 8,
   },
   tabItem: {
     flex: 1,
     alignItems: 'center',
-    gap: 2,
-    paddingVertical: 4,
-    position: 'relative',
-  },
-  tabActiveBar: {
-    position: 'absolute',
-    top: 0, left: '20%', right: '20%',
-    height: 3, borderRadius: 2,
+    gap: 3,
+    paddingVertical: 2,
   },
   tabIconWrap: { position: 'relative' },
-  tabEmoji:       { fontSize: 22, opacity: 0.4 },
+  tabPublishBtn: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: '#E0EAFF',
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: -4,
+  },
+  tabEmoji:       { fontSize: 22, opacity: 0.35 },
   tabEmojiActive: { opacity: 1 },
   tabBadge: {
     position: 'absolute', top: -4, right: -6,
@@ -390,5 +403,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2, borderWidth: 1.5, borderColor: '#fff',
   },
   tabBadgeText: { fontSize: 8, fontWeight: '900', color: '#fff' },
-  tabLabel: { fontSize: 10, color: '#94A3B8', fontWeight: '500' },
+  tabLabel: { fontSize: 10, color: '#94A3B8', fontWeight: '500', letterSpacing: 0.1 },
 });

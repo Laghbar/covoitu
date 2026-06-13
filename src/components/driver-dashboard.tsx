@@ -21,7 +21,6 @@ const TABS: { key: TabKey; emoji: string; label: string }[] = [
   { key: 'create',   emoji: '➕', label: 'Trip'    },
   { key: 'rides',    emoji: '🚗', label: 'Rides'   },
   { key: 'requests', emoji: '📋', label: 'Requests'},
-  { key: 'wallet',   emoji: '💰', label: 'Wallet'  },
   { key: 'profile',  emoji: '👤', label: 'Profile' },
 ];
 
@@ -133,8 +132,6 @@ export default function DriverDashboard() {
   useEffect(() => { fetchPendingCount(); }, [fetchPendingCount]);
   useEffect(() => { fetchWalletBalance(); }, [fetchWalletBalance]);
 
-  // Refresh wallet balance whenever wallet tab is visited
-  useEffect(() => { if (tab === 'wallet') fetchWalletBalance(); }, [tab, fetchWalletBalance]);
 
   useEffect(() => {
     if (!user) return;
@@ -164,7 +161,6 @@ export default function DriverDashboard() {
         {tab === 'create'   && <DriverCreateTrip          onNavigate={navigate} onWalletUpdated={fetchWalletBalance} />}
         {tab === 'rides'    && <DriverRides               onNavigate={navigate} />}
         {tab === 'requests' && <DriverPassengerRequests />}
-        {tab === 'wallet'   && <DriverWallet />}
         {tab === 'profile'  && <DriverProfile />}
       </View>
 

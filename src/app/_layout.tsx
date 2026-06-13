@@ -88,7 +88,7 @@ function AppContent() {
         content = (
           <AuthScreen
             role={selectedRole}
-            onChangeRole={() => setSelectedRole(null)}
+            onChangeRole={() => setSelectedRole(selectedRole === 'driver' ? 'passenger' : 'driver')}
           />
         );
       }

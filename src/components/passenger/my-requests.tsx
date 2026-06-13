@@ -300,6 +300,7 @@ type Props = { onCreateNew: () => void };
 
 export function PassengerRequests({ onCreateNew }: Props) {
   const { user } = useAuth();
+  const [view,       setView]       = useState<'active' | 'history'>('active');
   const [requests,   setRequests]   = useState<RideRequest[]>([]);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -307,12 +308,13 @@ export function PassengerRequests({ onCreateNew }: Props) {
   const fetch = useCallback(async () => {
     if (!user) return;
 
-    // Fetch requests — exclude cancelled and expired
+    const statuses = view === 'active' ? ['open', 'accepted'] : ['cancelled', 'expired'];
+
     const { data: reqs } = await supabase
       .from('ride_requests')
       .select('*')
       .eq('passenger_id', user.id)
-      .in('status', ['open', 'accepted'])
+      .in('status', statuses)
       .order('created_at', { ascending: false });
 
     if (!reqs?.length) { setRequests([]); return; }
@@ -368,7 +370,7 @@ export function PassengerRequests({ onCreateNew }: Props) {
     }));
 
     setRequests(result);
-  }, [user]);
+  }, [user, view]);
 
   useEffect(() => {
     (async () => { setLoading(true); await fetch(); setLoading(false); })();
@@ -389,8 +391,6 @@ export function PassengerRequests({ onCreateNew }: Props) {
 
   const totalPending = requests.reduce((n, r) => n + r.responses.filter(res => res.status === 'pending').length, 0);
 
-  if (loading) return <ActivityIndicator color={C} size="large" style={{ marginTop: 60 }} />;
-
   return (
     <FlatList
       data={requests}
@@ -398,18 +398,35 @@ export function PassengerRequests({ onCreateNew }: Props) {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C} />}
       ListHeaderComponent={
         <View style={s.header}>
+          {/* Title + new button */}
           <View style={s.titleRow}>
-            <Text style={s.title}>My Ride Requests</Text>
-            {totalPending > 0 && (
-              <View style={s.pendingBadge}>
-                <Text style={s.pendingBadgeTxt}>{totalPending} new proposal{totalPending > 1 ? 's' : ''}</Text>
-              </View>
+            <Text style={s.title}>Mes demandes</Text>
+            {view === 'active' && (
+              <Pressable style={s.newBtn} onPress={onCreateNew}>
+                <Text style={s.newBtnTxt}>+ Nouvelle</Text>
+              </Pressable>
             )}
           </View>
-          <Text style={s.subtitle}>Drivers respond to your requests directly here.</Text>
-          <Pressable style={s.newBtn} onPress={onCreateNew}>
-            <Text style={s.newBtnTxt}>+ New Request</Text>
-          </Pressable>
+
+          {/* Tab switcher */}
+          <View style={s.tabRow}>
+            <Pressable
+              style={[s.tab, view === 'active' && s.tabActive]}
+              onPress={() => setView('active')}
+            >
+              <Text style={[s.tabTxt, view === 'active' && s.tabTxtActive]}>
+                Actives {totalPending > 0 ? `· ${totalPending} 🔔` : ''}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[s.tab, view === 'history' && s.tabActive]}
+              onPress={() => setView('history')}
+            >
+              <Text style={[s.tabTxt, view === 'history' && s.tabTxtActive]}>Historique</Text>
+            </Pressable>
+          </View>
+
+          {loading && <ActivityIndicator color={C} style={{ marginTop: 20 }} />}
         </View>
       }
       contentContainerStyle={s.list}
@@ -421,14 +438,24 @@ export function PassengerRequests({ onCreateNew }: Props) {
         />
       )}
       ListEmptyComponent={
-        <View style={s.empty}>
-          <Text style={s.emptyEmoji}>🗺️</Text>
-          <Text style={s.emptyTitle}>No requests yet</Text>
-          <Text style={s.emptyBody}>Create a ride request and nearby drivers will propose their trips.</Text>
-          <Pressable style={s.newBtn} onPress={onCreateNew}>
-            <Text style={s.newBtnTxt}>+ Create your first request</Text>
-          </Pressable>
-        </View>
+        !loading ? (
+          <View style={s.empty}>
+            <Text style={s.emptyEmoji}>{view === 'history' ? '🕐' : '🗺️'}</Text>
+            <Text style={s.emptyTitle}>
+              {view === 'history' ? 'Aucun historique' : 'Aucune demande'}
+            </Text>
+            <Text style={s.emptyBody}>
+              {view === 'history'
+                ? 'Vos demandes annulées ou expirées apparaîtront ici.'
+                : 'Publiez une demande et les conducteurs vous proposeront un trajet.'}
+            </Text>
+            {view === 'active' && (
+              <Pressable style={s.newBtnLg} onPress={onCreateNew}>
+                <Text style={s.newBtnTxt}>+ Créer une demande</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : null
       }
     />
   );
@@ -438,14 +465,24 @@ export function PassengerRequests({ onCreateNew }: Props) {
 
 const s = StyleSheet.create({
   list:   { padding: 16, gap: 14, paddingBottom: 40 },
-  header: { gap: 8, marginBottom: 4 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  header: { gap: 12, marginBottom: 4 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title:    { fontSize: 22, fontWeight: '900', color: '#1E293B' },
-  subtitle: { fontSize: 13, color: '#64748B' },
-  pendingBadge:    { backgroundColor: G, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
-  pendingBadgeTxt: { color: '#fff', fontSize: 12, fontWeight: '800' },
-  newBtn:    { backgroundColor: C, borderRadius: 14, paddingVertical: 12, alignItems: 'center', marginTop: 4 },
-  newBtnTxt: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  newBtn:    { backgroundColor: C, borderRadius: 20, paddingVertical: 8, paddingHorizontal: 16, alignItems: 'center' },
+  newBtnLg:  { backgroundColor: C, borderRadius: 14, paddingVertical: 13, paddingHorizontal: 28, alignItems: 'center', marginTop: 4 },
+  newBtnTxt: { color: '#fff', fontSize: 13, fontWeight: '800' },
+
+  // Tab switcher
+  tabRow: {
+    flexDirection: 'row', backgroundColor: '#F1F5F9',
+    borderRadius: 14, padding: 4, gap: 4,
+  },
+  tab: {
+    flex: 1, paddingVertical: 9, borderRadius: 11, alignItems: 'center',
+  },
+  tabActive:   { backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 2 },
+  tabTxt:      { fontSize: 13, fontWeight: '600', color: '#94A3B8' },
+  tabTxtActive: { color: '#1E293B', fontWeight: '800' },
 
   card: {
     backgroundColor: '#fff', borderRadius: 18, overflow: 'hidden',
