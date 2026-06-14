@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
+import { useLang, useLanguage } from '@/context/language';
 import { supabase } from '@/lib/supabase';
 import { DriverHome }                from './driver/home';
 import { DriverCreateTrip }         from './driver/create-trip';
@@ -16,13 +17,16 @@ export const DRIVER_COLOR = '#10B981';
 
 type TabKey = 'home' | 'create' | 'rides' | 'requests' | 'wallet' | 'profile';
 
-const TABS: { key: TabKey; emoji: string; label: string }[] = [
-  { key: 'home',     emoji: '🏠', label: 'Home'    },
-  { key: 'create',   emoji: '➕', label: 'Trip'    },
-  { key: 'rides',    emoji: '🚗', label: 'Rides'   },
-  { key: 'requests', emoji: '📋', label: 'Requests'},
-  { key: 'profile',  emoji: '👤', label: 'Profile' },
-];
+function useTabs() {
+  const t = useLang();
+  return [
+    { key: 'home'    , emoji: '🏠', label: t('Home',     'Accueil')   },
+    { key: 'create'  , emoji: '➕', label: t('Trip',     'Trajet')    },
+    { key: 'rides'   , emoji: '🚗', label: t('Rides',    'Trajets')   },
+    { key: 'requests', emoji: '📋', label: t('Requests', 'Demandes')  },
+    { key: 'profile' , emoji: '👤', label: t('Profile',  'Profil')    },
+  ] as { key: TabKey; emoji: string; label: string }[];
+}
 
 function AppBar({
   pendingCount,
@@ -38,20 +42,27 @@ function AppBar({
   onWalletPress: () => void;
 }) {
   const { user } = useAuth();
+  const { lang, toggle } = useLanguage();
+  const t = useLang();
   const initial  = (user?.name?.[0] ?? 'D').toUpperCase();
 
   return (
     <View style={styles.appBar}>
       <View style={styles.appBarLeft}>
-        <View style={[styles.appLogo, { backgroundColor: DRIVER_COLOR }]}>
-          <Text style={{ fontSize: 12 }}>🚗</Text>
-        </View>
+        <Image
+          source={require('../../assets/images/newIcon.png')}
+          style={styles.appLogo}
+          resizeMode="contain"
+        />
         <Text style={styles.appName}>Horizon</Text>
         <View style={[styles.rolePill, { backgroundColor: DRIVER_COLOR + '18' }]}>
-          <Text style={[styles.roleText, { color: DRIVER_COLOR }]}>Driver</Text>
+          <Text style={[styles.roleText, { color: DRIVER_COLOR }]}>{t('Driver', 'Conducteur')}</Text>
         </View>
       </View>
       <View style={styles.appBarRight}>
+        <Pressable style={styles.langBtn} onPress={toggle}>
+          <Text style={styles.langTxt}>{lang === 'en' ? '🇫🇷 FR' : '🇬🇧 EN'}</Text>
+        </Pressable>
         {walletBalance !== null && (
           <Pressable style={styles.walletChip} onPress={onWalletPress}>
             <Text style={styles.walletChipTxt}>💰 {walletBalance.toFixed(0)} MAD</Text>
@@ -80,6 +91,7 @@ function BottomTabBar({
   active: TabKey;
   onChange: (k: TabKey) => void;
 }) {
+  const TABS = useTabs();
   return (
     <View style={styles.tabBar}>
       {TABS.map(tab => {
@@ -161,6 +173,7 @@ export default function DriverDashboard() {
         {tab === 'create'   && <DriverCreateTrip          onNavigate={navigate} onWalletUpdated={fetchWalletBalance} />}
         {tab === 'rides'    && <DriverRides               onNavigate={navigate} />}
         {tab === 'requests' && <DriverPassengerRequests />}
+        {tab === 'wallet'   && <DriverWallet />}
         {tab === 'profile'  && <DriverProfile />}
       </View>
 
@@ -190,8 +203,7 @@ const styles = StyleSheet.create({
   appBarLeft:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
   appBarRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   appLogo: {
-    width: 28, height: 28, borderRadius: 8,
-    alignItems: 'center', justifyContent: 'center',
+    width: 32, height: 32, borderRadius: 8,
   },
   appName:  { fontSize: 17, fontWeight: '800', color: '#1E293B', letterSpacing: -0.3 },
   rolePill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
@@ -202,6 +214,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 5,
   },
   walletChipTxt: { fontSize: 12, fontWeight: '700', color: DRIVER_COLOR },
+
+  langBtn: {
+    backgroundColor: '#F1F5F9', borderRadius: 16,
+    paddingHorizontal: 10, paddingVertical: 5,
+  },
+  langTxt: { fontSize: 12, fontWeight: '700', color: '#475569' },
 
   bellWrap: { position: 'relative', padding: 4 },
   bellIcon: { fontSize: 20 },

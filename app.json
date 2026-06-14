@@ -4,25 +4,24 @@
     "slug": "Harizana",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/newIcon.png",
     "scheme": "horizon",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/images/newIcon.png",
+      "supportsTablet": true
     },
     "android": {
       "package": "com.horizon.app",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/images/newIcon.png",
+        "backgroundColor": "#C8E6FA"
       },
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "single",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/newIcon.png"
     },
     "plugins": [
       "expo-router",
@@ -36,10 +35,13 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#C8E6FA",
+          "image": "./assets/images/newIcon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
           "android": {
-            "image": "./assets/images/splash-icon.png",
-            "imageWidth": 76
+            "image": "./assets/images/newIcon.png",
+            "imageWidth": 200
           }
         }
       ],
@@ -63,7 +65,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/images/icon.png",
+          "icon": "./assets/images/newIcon.png",
           "color": "#3B82F6",
           "defaultChannel": "default"
         }

@@ -14,6 +14,7 @@ import PassengerDashboard from '@/components/passenger-dashboard';
 import { RoleSelectionScreen } from '@/components/role-selection-screen';
 import { WelcomeScreen } from '@/components/welcome-screen';
 import { AuthProvider, useAuth } from '@/context/auth';
+import { LanguageProvider } from '@/context/language';
 import { Role } from '@/lib/api';
 
 // Returns true when running in a browser at the /panel path
@@ -135,8 +136,10 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <LanguageProvider>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </LanguageProvider>
   );
 }

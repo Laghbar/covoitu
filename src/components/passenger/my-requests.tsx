@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 
 import { useAuth } from '@/context/auth';
+import { useLang } from '@/context/language';
 import { supabase } from '@/lib/supabase';
 
 const C = '#3B82F6';
@@ -44,17 +45,20 @@ type RideRequest = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function fmtDate(d: string | null) {
+function fmtDate(d: string | null, locale = 'fr-MA') {
   if (!d) return '—';
-  return new Date(d).toLocaleDateString('fr-MA', { weekday: 'short', day: '2-digit', month: 'short' });
+  return new Date(d).toLocaleDateString(locale, { weekday: 'short', day: '2-digit', month: 'short' });
 }
 
-const REQ_STATUS: Record<string, { label: string; bg: string; fg: string }> = {
-  open:      { label: 'Open',      bg: '#EFF6FF', fg: C },
-  accepted:  { label: 'Accepted',  bg: '#D1FAE5', fg: G },
-  cancelled: { label: 'Cancelled', bg: '#FEE2E2', fg: '#EF4444' },
-  expired:   { label: 'Expired',   bg: '#F1F5F9', fg: '#94A3B8' },
-};
+function useReqStatus() {
+  const t = useLang();
+  return {
+    open:      { label: t('Open',      'Ouverte'),   bg: '#EFF6FF', fg: C },
+    accepted:  { label: t('Accepted',  'Acceptée'),  bg: '#D1FAE5', fg: G },
+    cancelled: { label: t('Cancelled', 'Annulée'),   bg: '#FEE2E2', fg: '#EF4444' },
+    expired:   { label: t('Expired',   'Expirée'),   bg: '#F1F5F9', fg: '#94A3B8' },
+  } as Record<string, { label: string; bg: string; fg: string }>;
+}
 
 // ─── Proposal Card ────────────────────────────────────────────────────────────
 
@@ -68,6 +72,7 @@ function ProposalCard({
   onAccept: () => void;
   onReject: () => void;
 }) {
+  const t = useLang();
   const isAccepted = res.status === 'accepted';
   const isRejected = res.status === 'rejected';
   const initial    = (res.driver_name?.[0] ?? 'D').toUpperCase();
@@ -86,19 +91,19 @@ function ProposalCard({
             </Text>
           ) : null}
           <View style={pc.metaRow}>
-            {res.ride_date ? <Text style={pc.meta}>{fmtDate(res.ride_date)}</Text> : null}
+            {res.ride_date ? <Text style={pc.meta}>{fmtDate(res.ride_date, t('en-GB', 'fr-MA'))}</Text> : null}
             {res.ride_time ? <Text style={pc.meta}>· {res.ride_time.slice(0, 5)}</Text> : null}
             {res.ride_price != null ? (
-              <Text style={[pc.meta, pc.price]}>{res.ride_price} MAD/seat</Text>
+              <Text style={[pc.meta, pc.price]}>{res.ride_price} {t('MAD/seat', 'MAD/place')}</Text>
             ) : null}
           </View>
         </View>
         {isAccepted && (
-          <View style={pc.badge}><Text style={[pc.badgeTxt, { color: G }]}>✓ Accepted</Text></View>
+          <View style={pc.badge}><Text style={[pc.badgeTxt, { color: G }]}>✓ {t('Accepted', 'Accepté')}</Text></View>
         )}
         {isRejected && (
           <View style={[pc.badge, { backgroundColor: '#F1F5F9' }]}>
-            <Text style={[pc.badgeTxt, { color: '#94A3B8' }]}>✗ Declined</Text>
+            <Text style={[pc.badgeTxt, { color: '#94A3B8' }]}>✗ {t('Declined', 'Refusé')}</Text>
           </View>
         )}
       </View>
@@ -108,10 +113,10 @@ function ProposalCard({
       {res.status === 'pending' && requestStatus === 'open' && (
         <View style={pc.actions}>
           <Pressable style={pc.declineBtn} onPress={onReject}>
-            <Text style={pc.declineTxt}>✗ Decline</Text>
+            <Text style={pc.declineTxt}>✗ {t('Decline', 'Refuser')}</Text>
           </Pressable>
           <Pressable style={pc.acceptBtn} onPress={onAccept}>
-            <Text style={pc.acceptTxt}>✓ Accept Driver</Text>
+            <Text style={pc.acceptTxt}>✓ {t('Accept Driver', 'Accepter le conducteur')}</Text>
           </Pressable>
         </View>
       )}
@@ -147,6 +152,8 @@ const pc = StyleSheet.create({
 // ─── Request Card (with inline proposals) ─────────────────────────────────────
 
 function RequestCard({ req, onUpdate, onRemove }: { req: RideRequest; onUpdate: () => void; onRemove: () => void }) {
+  const t = useLang();
+  const REQ_STATUS = useReqStatus();
   const [acting,        setActing]        = useState(false);
   const [expanded,      setExpanded]      = useState(req.responses.some(r => r.status === 'pending'));
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -214,9 +221,9 @@ function RequestCard({ req, onUpdate, onRemove }: { req: RideRequest; onUpdate: 
         <View style={{ flex: 1 }}>
           <Text style={s.route}>{req.from_city} → {req.to_city}</Text>
           <Text style={s.meta}>
-            {fmtDate(req.departure_date)} · {req.departure_time.slice(0, 5)} · {req.seats_needed} seat{req.seats_needed > 1 ? 's' : ''}
+            {fmtDate(req.departure_date, t('en-GB', 'fr-MA'))} · {req.departure_time.slice(0, 5)} · {req.seats_needed} {t(req.seats_needed > 1 ? 'seats' : 'seat', req.seats_needed > 1 ? 'places' : 'place')}
           </Text>
-          {req.max_price ? <Text style={s.maxPrice}>Max {req.max_price} MAD/seat</Text> : null}
+          {req.max_price ? <Text style={s.maxPrice}>{t('Max', 'Max')} {req.max_price} {t('MAD/seat', 'MAD/place')}</Text> : null}
         </View>
         <View style={s.headerRight}>
           <View style={[s.statusBadge, { backgroundColor: cfg.bg }]}>
@@ -230,7 +237,7 @@ function RequestCard({ req, onUpdate, onRemove }: { req: RideRequest; onUpdate: 
       {pending.length > 0 && !expanded && (
         <Pressable style={s.proposalBanner} onPress={() => setExpanded(true)}>
           <Text style={s.proposalBannerTxt}>
-            🚗 {pending.length} driver proposal{pending.length > 1 ? 's' : ''} waiting — Tap to review
+            🚗 {pending.length} {t(pending.length > 1 ? 'driver proposals waiting — Tap to review' : 'driver proposal waiting — Tap to review', pending.length > 1 ? 'propositions de conducteurs en attente — Appuyez pour voir' : 'proposition de conducteur en attente — Appuyez pour voir')}
           </Text>
         </Pressable>
       )}
@@ -243,13 +250,13 @@ function RequestCard({ req, onUpdate, onRemove }: { req: RideRequest; onUpdate: 
           {visible.length === 0 ? (
             <View style={s.noProposals}>
               <Text style={s.noProposalsTxt}>
-                No driver proposals yet. Drivers will see your request and respond soon.
+                {t('No driver proposals yet. Drivers will see your request and respond soon.', 'Aucune proposition de conducteur pour l\'instant. Les conducteurs verront votre demande et répondront bientôt.')}
               </Text>
             </View>
           ) : (
             <>
               <Text style={s.proposalsLabel}>
-                {visible.length} Driver Proposal{visible.length > 1 ? 's' : ''}
+                {visible.length} {t(visible.length > 1 ? 'Driver Proposals' : 'Driver Proposal', visible.length > 1 ? 'Propositions de conducteurs' : 'Proposition de conducteur')}
               </Text>
               {visible.map(res => (
                 <ProposalCard
@@ -266,24 +273,24 @@ function RequestCard({ req, onUpdate, onRemove }: { req: RideRequest; onUpdate: 
 
           {req.message ? (
             <View style={s.noteBox}>
-              <Text style={s.noteTxt}>Your note: "{req.message}"</Text>
+              <Text style={s.noteTxt}>{t('Your note:', 'Votre note :')} "{req.message}"</Text>
             </View>
           ) : null}
 
           {req.status === 'open' && !confirmCancel && (
             <Pressable style={s.cancelBtn} onPress={() => setConfirmCancel(true)}>
-              <Text style={s.cancelTxt}>Cancel this request</Text>
+              <Text style={s.cancelTxt}>{t('Cancel this request', 'Annuler cette demande')}</Text>
             </Pressable>
           )}
           {req.status === 'open' && confirmCancel && (
             <View style={s.confirmRow}>
-              <Text style={s.confirmTxt}>Cancel this request?</Text>
+              <Text style={s.confirmTxt}>{t('Cancel this request?', 'Annuler cette demande ?')}</Text>
               <View style={s.confirmBtns}>
                 <Pressable style={s.confirmNo} onPress={() => setConfirmCancel(false)}>
-                  <Text style={s.confirmNoTxt}>No</Text>
+                  <Text style={s.confirmNoTxt}>{t('No', 'Non')}</Text>
                 </Pressable>
                 <Pressable style={s.confirmYes} onPress={doCancel}>
-                  <Text style={s.confirmYesTxt}>Yes, cancel</Text>
+                  <Text style={s.confirmYesTxt}>{t('Yes, cancel', 'Oui, annuler')}</Text>
                 </Pressable>
               </View>
             </View>
@@ -300,6 +307,7 @@ type Props = { onCreateNew: () => void };
 
 export function PassengerRequests({ onCreateNew }: Props) {
   const { user } = useAuth();
+  const t = useLang();
   const [view,       setView]       = useState<'active' | 'history'>('active');
   const [requests,   setRequests]   = useState<RideRequest[]>([]);
   const [loading,    setLoading]    = useState(true);
@@ -400,10 +408,10 @@ export function PassengerRequests({ onCreateNew }: Props) {
         <View style={s.header}>
           {/* Title + new button */}
           <View style={s.titleRow}>
-            <Text style={s.title}>Mes demandes</Text>
+            <Text style={s.title}>{t('My Requests', 'Mes demandes')}</Text>
             {view === 'active' && (
               <Pressable style={s.newBtn} onPress={onCreateNew}>
-                <Text style={s.newBtnTxt}>+ Nouvelle</Text>
+                <Text style={s.newBtnTxt}>{t('+ New', '+ Nouvelle')}</Text>
               </Pressable>
             )}
           </View>
@@ -415,14 +423,14 @@ export function PassengerRequests({ onCreateNew }: Props) {
               onPress={() => setView('active')}
             >
               <Text style={[s.tabTxt, view === 'active' && s.tabTxtActive]}>
-                Actives {totalPending > 0 ? `· ${totalPending} 🔔` : ''}
+                {t('Active', 'Actives')} {totalPending > 0 ? `· ${totalPending} 🔔` : ''}
               </Text>
             </Pressable>
             <Pressable
               style={[s.tab, view === 'history' && s.tabActive]}
               onPress={() => setView('history')}
             >
-              <Text style={[s.tabTxt, view === 'history' && s.tabTxtActive]}>Historique</Text>
+              <Text style={[s.tabTxt, view === 'history' && s.tabTxtActive]}>{t('History', 'Historique')}</Text>
             </Pressable>
           </View>
 
@@ -442,16 +450,16 @@ export function PassengerRequests({ onCreateNew }: Props) {
           <View style={s.empty}>
             <Text style={s.emptyEmoji}>{view === 'history' ? '🕐' : '🗺️'}</Text>
             <Text style={s.emptyTitle}>
-              {view === 'history' ? 'Aucun historique' : 'Aucune demande'}
+              {view === 'history' ? t('No history', 'Aucun historique') : t('No requests', 'Aucune demande')}
             </Text>
             <Text style={s.emptyBody}>
               {view === 'history'
-                ? 'Vos demandes annulées ou expirées apparaîtront ici.'
-                : 'Publiez une demande et les conducteurs vous proposeront un trajet.'}
+                ? t('Your cancelled or expired requests will appear here.', 'Vos demandes annulées ou expirées apparaîtront ici.')
+                : t('Post a request and drivers will propose a ride.', 'Publiez une demande et les conducteurs vous proposeront un trajet.')}
             </Text>
             {view === 'active' && (
               <Pressable style={s.newBtnLg} onPress={onCreateNew}>
-                <Text style={s.newBtnTxt}>+ Créer une demande</Text>
+                <Text style={s.newBtnTxt}>{t('+ Create a request', '+ Créer une demande')}</Text>
               </Pressable>
             )}
           </View>

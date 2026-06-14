@@ -84,24 +84,36 @@ const ALIASES: Record<string, string> = {
   'ouarzazate': 'Ouarzazate',
 };
 
+// Strip diacritics for accent-insensitive comparison
+// e.g. "Hoceïma" → "Hoceima", "Béni" → "Beni"
+export function stripDiacritics(s: string): string {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
 export function normalizeCity(input: string): string {
   if (!input?.trim()) return input;
-  const t = input.trim();
-
-  // Direct alias lookup (case-insensitive)
+  const t  = input.trim();
   const lc = t.toLowerCase();
+  const ld = stripDiacritics(lc); // accent-free version for fuzzy matching
+
+  // Direct alias lookup (case-insensitive, accent-insensitive)
   for (const [alias, canonical] of Object.entries(ALIASES)) {
-    if (alias.toLowerCase() === lc) return canonical;
+    const al = alias.toLowerCase();
+    if (al === lc || stripDiacritics(al) === ld) return canonical;
   }
 
-  // Exact match against canonical list (case-insensitive)
+  // Exact match against canonical list (case-insensitive, then accent-insensitive)
   const exact = MOROCCAN_CITIES.find(c => c.toLowerCase() === lc);
   if (exact) return exact;
 
-  // Partial match — canonical contains input or input contains canonical
-  const partial = MOROCCAN_CITIES.find(c =>
-    c.toLowerCase().includes(lc) || lc.includes(c.toLowerCase()),
-  );
+  const exactAccent = MOROCCAN_CITIES.find(c => stripDiacritics(c.toLowerCase()) === ld);
+  if (exactAccent) return exactAccent;
+
+  // Partial match — accent-insensitive
+  const partial = MOROCCAN_CITIES.find(c => {
+    const cd = stripDiacritics(c.toLowerCase());
+    return cd.includes(ld) || ld.includes(cd);
+  });
   if (partial) return partial;
 
   return t;

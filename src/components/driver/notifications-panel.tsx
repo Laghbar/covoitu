@@ -6,6 +6,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
+import { useLang } from '@/context/language';
 import { supabase } from '@/lib/supabase';
 
 const C = '#10B981';
@@ -16,8 +17,94 @@ type Booking = {
   message?: string | null;
   created_at: string;
   ride: { id: string; from_city: string; to_city: string; departure_date: string; departure_time: string } | null;
-  passenger: { name: string } | null;
+  passenger: { id: string; name: string; avg_rating: number | null; total_trips: number } | null;
 };
+
+function PassengerProfileModal({ passenger, onClose }: {
+  passenger: Booking['passenger'];
+  onClose: () => void;
+}) {
+  const t = useLang();
+  if (!passenger) return null;
+  const initial = (passenger.name?.[0] ?? '?').toUpperCase();
+  const rating  = passenger.avg_rating;
+  const trips   = passenger.total_trips ?? 0;
+
+  const stars = (r: number) => {
+    const full  = Math.floor(r);
+    const half  = r - full >= 0.5;
+    let s = '★'.repeat(full);
+    if (half) s += '½';
+    return s || '☆';
+  };
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={pm2.overlay} onPress={onClose} />
+      <View style={pm2.card}>
+        <View style={pm2.handle} />
+
+        {/* Avatar */}
+        <View style={pm2.avatarWrap}>
+          <View style={pm2.avatar}>
+            <Text style={pm2.avatarTxt}>{initial}</Text>
+          </View>
+        </View>
+
+        <Text style={pm2.name}>{passenger.name}</Text>
+        <Text style={pm2.role}>{t('Passenger', 'Passager')}</Text>
+
+        {/* Stats */}
+        <View style={pm2.statsRow}>
+          <View style={pm2.stat}>
+            <Text style={pm2.statVal}>{trips}</Text>
+            <Text style={pm2.statLabel}>{t('Trips', 'Trajets')}</Text>
+          </View>
+          <View style={pm2.divider} />
+          <View style={pm2.stat}>
+            {rating != null ? (
+              <>
+                <Text style={pm2.statVal}>{rating.toFixed(1)}</Text>
+                <Text style={[pm2.statLabel, { color: '#F59E0B' }]}>{stars(rating)}</Text>
+              </>
+            ) : (
+              <>
+                <Text style={pm2.statVal}>—</Text>
+                <Text style={pm2.statLabel}>{t('New', 'Nouveau')}</Text>
+              </>
+            )}
+          </View>
+        </View>
+
+        <Pressable style={pm2.closeBtn} onPress={onClose}>
+          <Text style={pm2.closeTxt}>{t('Close', 'Fermer')}</Text>
+        </Pressable>
+      </View>
+    </Modal>
+  );
+}
+
+const pm2 = StyleSheet.create({
+  overlay: { position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)' },
+  card: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    padding: 24, paddingBottom: 40, alignItems: 'center', gap: 8,
+  },
+  handle:    { width: 40, height: 4, borderRadius: 2, backgroundColor: '#CBD5E1', marginBottom: 12 },
+  avatarWrap:{ marginBottom: 4 },
+  avatar:    { width: 80, height: 80, borderRadius: 40, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#BFDBFE' },
+  avatarTxt: { fontSize: 34, fontWeight: '900', color: '#3B82F6' },
+  name:      { fontSize: 22, fontWeight: '900', color: '#1E293B' },
+  role:      { fontSize: 13, color: '#94A3B8', fontWeight: '600', marginBottom: 16 },
+  statsRow:  { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderRadius: 16, padding: 20, gap: 24, marginBottom: 8 },
+  stat:      { alignItems: 'center', gap: 2, minWidth: 70 },
+  statVal:   { fontSize: 26, fontWeight: '900', color: '#1E293B' },
+  statLabel: { fontSize: 12, fontWeight: '600', color: '#94A3B8' },
+  divider:   { width: 1, height: 40, backgroundColor: '#E2E8F0' },
+  closeBtn:  { backgroundColor: '#F1F5F9', borderRadius: 14, paddingHorizontal: 40, paddingVertical: 13, marginTop: 8 },
+  closeTxt:  { fontSize: 15, fontWeight: '800', color: '#475569' },
+});
 
 function confirm(msg: string, cb: () => void) {
   if (Platform.OS === 'web') {
@@ -35,29 +122,37 @@ function RequestCard({
   booking,
   onAccept,
   onReject,
-}: { booking: Booking; onAccept: (b: Booking) => void; onReject: (id: string) => void }) {
+  onViewProfile,
+}: { booking: Booking; onAccept: (b: Booking) => void; onReject: (id: string) => void; onViewProfile: (p: Booking['passenger']) => void }) {
+  const t = useLang();
   const fade    = useRef(new Animated.Value(1)).current;
   const initial = (booking.passenger?.name?.[0] ?? '?').toUpperCase();
+  const rating  = booking.passenger?.avg_rating;
 
   const animateThen = (cb: () => void) =>
     Animated.timing(fade, { toValue: 0, duration: 220, useNativeDriver: true }).start(cb);
 
   return (
     <Animated.View style={[styles.card, { opacity: fade }]}>
-      <View style={styles.passengerRow}>
+      <Pressable style={styles.passengerRow} onPress={() => onViewProfile(booking.passenger)}>
         <View style={styles.avatar}>
           <Text style={styles.avatarTxt}>{initial}</Text>
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.passengerName}>{booking.passenger?.name ?? 'Passenger'}</Text>
           <Text style={styles.seatsTxt}>
-            {booking.seats_requested} seat{booking.seats_requested > 1 ? 's' : ''} requested
+            {booking.seats_requested} {booking.seats_requested > 1 ? t('seats', 'places') : t('seat', 'place')} · {
+              rating != null ? `⭐ ${rating.toFixed(1)}` : t('New passenger', 'Nouveau passager')
+            }
           </Text>
         </View>
-        <Text style={styles.dateTxt}>
-          {new Date(booking.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
-        </Text>
-      </View>
+        <View style={{ alignItems: 'flex-end', gap: 2 }}>
+          <Text style={styles.dateTxt}>
+            {new Date(booking.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+          </Text>
+          <Text style={styles.viewProfileHint}>{t('View profile →', 'Voir profil →')}</Text>
+        </View>
+      </Pressable>
 
       {booking.ride && (
         <View style={styles.tripBox}>
@@ -79,13 +174,13 @@ function RequestCard({
       <View style={styles.actions}>
         <Pressable
           style={[styles.btn, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}
-          onPress={() => confirm('Decline this request?', () => animateThen(() => onReject(booking.id)))}>
-          <Text style={[styles.btnTxt, { color: '#EF4444' }]}>✕  Decline</Text>
+          onPress={() => confirm(t('Decline this request?', 'Refuser cette demande ?'), () => animateThen(() => onReject(booking.id)))}>
+          <Text style={[styles.btnTxt, { color: '#EF4444' }]}>✕  {t('Decline', 'Refuser')}</Text>
         </Pressable>
         <Pressable
           style={[styles.btn, { backgroundColor: C, borderColor: C }]}
-          onPress={() => confirm('Accept this passenger?', () => animateThen(() => onAccept(booking)))}>
-          <Text style={[styles.btnTxt, { color: '#fff' }]}>✓  Accept</Text>
+          onPress={() => confirm(t('Accept this passenger?', 'Accepter ce passager ?'), () => animateThen(() => onAccept(booking)))}>
+          <Text style={[styles.btnTxt, { color: '#fff' }]}>✓  {t('Accept', 'Accepter')}</Text>
         </Pressable>
       </View>
     </Animated.View>
@@ -100,10 +195,12 @@ type Props = {
 
 export function NotificationsPanel({ visible, onClose, onCountChange }: Props) {
   const { user } = useAuth();
+  const t = useLang();
   const insets   = useSafeAreaInsets();
-  const [bookings,    setBookings]    = useState<Booking[]>([]);
-  const [loading,     setLoading]     = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [bookings,       setBookings]       = useState<Booking[]>([]);
+  const [loading,        setLoading]        = useState(false);
+  const [actionError,    setActionError]    = useState<string | null>(null);
+  const [viewPassenger,  setViewPassenger]  = useState<Booking['passenger'] | null>(null);
 
   const fetch = useCallback(async () => {
     if (!user) return;
@@ -117,7 +214,7 @@ export function NotificationsPanel({ visible, onClose, onCountChange }: Props) {
       .select(`
         id, seats_requested, message, created_at,
         ride:ride_id(id, from_city, to_city, departure_date, departure_time),
-        passenger:passenger_id(name)
+        passenger:passenger_id(id, name, avg_rating, total_trips)
       `)
       .in('ride_id', ids)
       .eq('status', 'pending')
@@ -171,6 +268,10 @@ export function NotificationsPanel({ visible, onClose, onCountChange }: Props) {
       transparent
       animationType="slide"
       onRequestClose={onClose}>
+      <PassengerProfileModal
+        passenger={viewPassenger}
+        onClose={() => setViewPassenger(null)}
+      />
       {/* Dark overlay */}
       <Pressable style={styles.overlay} onPress={onClose} />
 
@@ -182,7 +283,7 @@ export function NotificationsPanel({ visible, onClose, onCountChange }: Props) {
         {/* Header */}
         <View style={styles.header}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <Text style={styles.title}>Requests</Text>
+            <Text style={styles.title}>{t('Requests', 'Demandes')}</Text>
             {bookings.length > 0 && (
               <View style={styles.countBadge}>
                 <Text style={styles.countTxt}>{bookings.length}</Text>
@@ -209,12 +310,18 @@ export function NotificationsPanel({ visible, onClose, onCountChange }: Props) {
           ) : bookings.length === 0 ? (
             <View style={styles.emptyBox}>
               <Text style={styles.emptyIcon}>📭</Text>
-              <Text style={styles.emptyTxt}>No pending requests</Text>
-              <Text style={styles.emptySub}>New booking requests will appear here.</Text>
+              <Text style={styles.emptyTxt}>{t('No pending requests', 'Aucune demande en attente')}</Text>
+              <Text style={styles.emptySub}>{t('New booking requests will appear here.', 'Les nouvelles demandes apparaîtront ici.')}</Text>
             </View>
           ) : (
             bookings.map(b => (
-              <RequestCard key={b.id} booking={b} onAccept={acceptBooking} onReject={rejectBooking} />
+              <RequestCard
+                key={b.id}
+                booking={b}
+                onAccept={acceptBooking}
+                onReject={rejectBooking}
+                onViewProfile={setViewPassenger}
+              />
             ))
           )}
         </ScrollView>
@@ -273,9 +380,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center',
   },
   avatarTxt:     { fontSize: 17, fontWeight: '800', color: '#3B82F6' },
-  passengerName: { fontSize: 14, fontWeight: '700', color: '#1E293B' },
-  seatsTxt:      { fontSize: 12, color: '#94A3B8', marginTop: 1 },
-  dateTxt:       { fontSize: 11, color: '#CBD5E1' },
+  passengerName:   { fontSize: 14, fontWeight: '700', color: '#1E293B' },
+  seatsTxt:        { fontSize: 12, color: '#94A3B8', marginTop: 1 },
+  dateTxt:         { fontSize: 11, color: '#CBD5E1' },
+  viewProfileHint: { fontSize: 10, color: C, fontWeight: '700' },
 
   tripBox: {
     backgroundColor: '#F8FAFC', borderRadius: 10, padding: 10, gap: 3,

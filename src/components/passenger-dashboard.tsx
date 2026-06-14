@@ -1,36 +1,42 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
+import { useLang, useLanguage } from '@/context/language';
 import { supabase } from '@/lib/supabase';
 import { PassengerHome }       from './passenger/home';
 import { PassengerSearch }     from './passenger/search';
 import { PassengerRideDetail } from './passenger/ride-detail';
 import { PassengerBookings }   from './passenger/bookings';
 import { PassengerProfile }    from './passenger/profile';
-import { PassengerRequests }   from './passenger/my-requests';
-import { CreateRequestModal }  from './passenger/create-request';
-import { QRScannerModal }      from './passenger/qr-scanner';
-import { DriverPublicProfile } from './passenger/driver-public-profile';
+import { PassengerRequests }    from './passenger/my-requests';
+import { CreateRequestModal }   from './passenger/create-request';
+import { QRScannerModal }       from './passenger/qr-scanner';
+import { DriverPublicProfile }  from './passenger/driver-public-profile';
+import { NotificationCenter }   from './passenger/notification-center';
 
 export const PASSENGER_COLOR = '#3B82F6';
 
 type TabKey = 'home' | 'search' | 'requests' | 'bookings' | 'profile';
 
-const TABS: { key: TabKey; emoji: string; label: string }[] = [
-  { key: 'home',     emoji: '🔍', label: 'Rechercher' },
-  { key: 'requests', emoji: '➕', label: 'Publier'    },
-  { key: 'bookings', emoji: '🗺️', label: 'Vos trajets'},
-  { key: 'profile',  emoji: '👤', label: 'Profil'     },
-];
+function useTabs() {
+  const t = useLang();
+  return [
+    { key: 'home'    , emoji: '🔍', label: t('Search',   'Rechercher')  },
+    { key: 'requests', emoji: '➕', label: t('Post',     'Publier')     },
+    { key: 'bookings', emoji: '🗺️', label: t('My trips', 'Vos trajets') },
+    { key: 'profile' , emoji: '👤', label: t('Profile',  'Profil')      },
+  ] as { key: TabKey; emoji: string; label: string }[];
+}
 
 export type RideItem = {
   id: string; from: string; to: string; date: string; time: string;
   price: number; seats: number; bookedSeats: number;
-  driver: { name: string; initial: string; rating: number; trips: number; memberSince: string; bio: string };
+  driver: { name: string; initial: string; rating: number | null; trips: number; memberSince: string; bio: string };
   car: { make: string; model: string; year: string; color: string; plate: string };
   preferences: string[]; pickupPoint: string; dropoffPoint: string; note?: string;
+  paymentMethod: 'cash' | 'in_app';
 };
 
 function AppBar({
@@ -43,20 +49,26 @@ function AppBar({
   onAvatarPress: () => void;
 }) {
   const { user } = useAuth();
+  const { lang, toggle } = useLanguage();
   const initial  = (user?.name?.[0] ?? 'P').toUpperCase();
 
   return (
     <View style={styles.appBar}>
       {/* Left: logo + name */}
       <View style={styles.appBarLeft}>
-        <View style={[styles.appLogo, { backgroundColor: PASSENGER_COLOR }]}>
-          <Text style={{ fontSize: 12 }}>🚌</Text>
-        </View>
+        <Image
+          source={require('../../assets/images/newIcon.png')}
+          style={styles.appLogo}
+          resizeMode="contain"
+        />
         <Text style={styles.appName}>Horizon</Text>
       </View>
 
-      {/* Right: bell + avatar */}
+      {/* Right: lang + bell + avatar */}
       <View style={styles.appBarRight}>
+        <Pressable style={styles.langBtn} onPress={toggle}>
+          <Text style={styles.langTxt}>{lang === 'en' ? '🇫🇷 FR' : '🇬🇧 EN'}</Text>
+        </Pressable>
         <Pressable style={styles.bellWrap} onPress={onBellPress}>
           <Text style={styles.bellIcon}>🔔</Text>
           {notifCount > 0 && (
@@ -82,6 +94,7 @@ function BottomTabBar({
   onChange: (k: TabKey) => void;
   bookingCount: number;
 }) {
+  const TABS = useTabs();
   return (
     <View style={styles.tabBar}>
       {TABS.map(tab => {
@@ -186,6 +199,7 @@ export default function PassengerDashboard() {
   const [qrOpen,          setQrOpen]          = useState(false);
   const [selectedDriver,  setSelectedDriver]  = useState<string | null>(null);
   const [createReqOpen,   setCreateReqOpen]   = useState(false);
+  const [notifOpen,       setNotifOpen]       = useState(false);
 
   const tabRef = useRef(tab);
   useEffect(() => { tabRef.current = tab; }, [tab]);
@@ -272,7 +286,7 @@ export default function PassengerDashboard() {
       <View style={[styles.topSafe, { paddingTop: insets.top }]}>
         <AppBar
           notifCount={notifCount}
-          onBellPress={() => changeTab('bookings')}
+          onBellPress={() => setNotifOpen(true)}
           onAvatarPress={() => changeTab('profile')}
         />
       </View>
@@ -300,6 +314,13 @@ export default function PassengerDashboard() {
         visible={qrOpen}
         onClose={() => setQrOpen(false)}
         onDriverFound={(id) => { setSelectedDriver(id); }}
+      />
+
+      {/* Notification center */}
+      <NotificationCenter
+        visible={notifOpen}
+        onClose={() => setNotifOpen(false)}
+        onClearCount={() => setNotifCount(0)}
       />
 
       {/* Page content */}
@@ -355,13 +376,14 @@ const styles = StyleSheet.create({
   appBarLeft:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
   appBarRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   appLogo: {
-    width: 28, height: 28, borderRadius: 8,
-    alignItems: 'center', justifyContent: 'center',
+    width: 32, height: 32, borderRadius: 8,
   },
   appName:  { fontSize: 17, fontWeight: '800', color: '#1E293B', letterSpacing: -0.3 },
   rolePill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   roleText: { fontSize: 11, fontWeight: '700' },
 
+  langBtn: { backgroundColor: '#F1F5F9', borderRadius: 16, paddingHorizontal: 10, paddingVertical: 5 },
+  langTxt: { fontSize: 12, fontWeight: '700', color: '#475569' },
   bellWrap: { position: 'relative', padding: 4 },
   bellIcon: { fontSize: 20 },
   bellBadge: {

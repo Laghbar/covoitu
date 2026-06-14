@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/auth';
 import { supabase } from '@/lib/supabase';
 import { RideItem } from '../passenger-dashboard';
+import { calcPassengerPrice, PASSENGER_FEE_INAPP, calcDriverCommission } from '@/lib/commission';
 
 const C = '#3B82F6';
 
@@ -40,7 +41,8 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
   const [loading,   setLoading] = useState(false);
   const [bookError, setBookError] = useState<string | null>(null);
   const [booked,    setBooked]   = useState(false);
-  const available = ride.seats - ride.bookedSeats;
+  const available      = ride.seats - ride.bookedSeats;
+  const passengerPrice = calcPassengerPrice(ride.price, ride.paymentMethod);
 
   // Check if passenger already has an active booking for this ride
   useEffect(() => {
@@ -62,7 +64,7 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
       ride_id:         ride.id,
       passenger_id:    user.id,
       seats_requested: seats,
-      total_price:     seats * ride.price,
+      total_price:     seats * passengerPrice,
       status:          'pending',
       message:         message.trim() || null,
     });
@@ -76,8 +78,8 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
     if (available === 0){ setBookError('This ride is full.'); return; }
 
     const summary = seats > 1
-      ? `${seats} seats × ${ride.price} MAD = ${seats * ride.price} MAD`
-      : `${seats} seat · ${seats * ride.price} MAD`;
+      ? `${seats} sièges × ${passengerPrice} MAD = ${seats * passengerPrice} MAD`
+      : `${seats} siège · ${passengerPrice} MAD`;
 
     if (Platform.OS === 'web') {
       if (window.confirm(`Book on ${ride.from} → ${ride.to}?\n${summary}`)) doBook();
@@ -118,7 +120,7 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
           </View>
           <View style={styles.heroMeta}>
             <Text style={styles.heroDate}>{ride.date} · {ride.time}</Text>
-            <Text style={styles.heroPrice}>{ride.price} MAD / seat</Text>
+            <Text style={styles.heroPrice}>{passengerPrice} MAD / siège</Text>
           </View>
         </View>
 
@@ -132,8 +134,18 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
             <View style={{ flex: 1, gap: 4 }}>
               <Text style={styles.driverName}>{ride.driver.name}</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Stars value={Math.round(ride.driver.rating)} />
-                <Text style={styles.driverRating}>{ride.driver.rating} · {ride.driver.trips} trips</Text>
+                {ride.driver.rating != null ? (
+                  <>
+                    <Stars value={Math.round(ride.driver.rating)} />
+                    <Text style={styles.driverRating}>
+                      {ride.driver.rating.toFixed(1)} · {ride.driver.trips} avis
+                    </Text>
+                  </>
+                ) : (
+                  <Text style={[styles.driverRating, { color: '#94A3B8', fontStyle: 'italic' }]}>
+                    Nouveau conducteur
+                  </Text>
+                )}
               </View>
               <Text style={styles.driverMember}>Member since {ride.driver.memberSince}</Text>
             </View>
@@ -176,6 +188,7 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
             { icon: { ios: 'arrow.up.circle.fill', android: 'trip_origin' }, color: C, label: 'PICKUP POINT', value: ride.pickupPoint || 'Not specified' },
             { icon: { ios: 'arrow.down.circle.fill', android: 'place' }, color: '#EF4444', label: 'DROP-OFF POINT', value: ride.dropoffPoint || 'Not specified' },
             { icon: { ios: 'person.2.fill', android: 'group' }, color: '#64748B', label: 'AVAILABLE SEATS', value: `${available} of ${ride.seats}` },
+            { icon: { ios: 'creditcard.fill', android: 'payments' }, color: ride.paymentMethod === 'in_app' ? '#3B82F6' : '#16A34A', label: 'PAIEMENT', value: ride.paymentMethod === 'in_app' ? '📱 Via l\'application' : '💵 Espèces au conducteur' },
           ].map((d, i) => (
             <View key={i} style={styles.detailRow}>
               <SymbolView name={d.icon as any} size={16} tintColor={d.color} />
@@ -209,10 +222,12 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
         <View style={styles.card}>
           <View style={styles.reviewsHeader}>
             <Text style={styles.cardTitle}>Recent Reviews</Text>
-            <View style={styles.ratingBadge}>
-              <SymbolView name={{ ios: 'star.fill', android: 'star' } as any} size={13} tintColor="#F59E0B" />
-              <Text style={styles.ratingBadgeText}>{ride.driver.rating}</Text>
-            </View>
+            {ride.driver.rating != null && (
+              <View style={styles.ratingBadge}>
+                <SymbolView name={{ ios: 'star.fill', android: 'star' } as any} size={13} tintColor="#F59E0B" />
+                <Text style={styles.ratingBadgeText}>{ride.driver.rating.toFixed(1)}</Text>
+              </View>
+            )}
           </View>
           {REVIEWS.map((r, i) => (
             <View key={i} style={[styles.reviewCard, i < REVIEWS.length - 1 && { borderBottomWidth: 1, borderBottomColor: '#F1F5F9', paddingBottom: 12 }]}>
@@ -287,9 +302,14 @@ export function PassengerRideDetail({ ride, onBack, onNavigate }: Props) {
         {/* Price + action */}
         <View style={styles.bookRight}>
           <View style={{ alignItems: 'flex-end' }}>
-            <Text style={styles.totalPrice}>{seats * ride.price} MAD</Text>
+            <Text style={styles.totalPrice}>{seats * passengerPrice} MAD</Text>
             {seats > 1 && (
-              <Text style={styles.priceBreakdown}>{seats} × {ride.price} MAD</Text>
+              <Text style={styles.priceBreakdown}>{seats} × {passengerPrice} MAD</Text>
+            )}
+            {ride.paymentMethod === 'in_app' && (
+              <Text style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
+                incl. {PASSENGER_FEE_INAPP} MAD frais service
+              </Text>
             )}
           </View>
           {booked ? (

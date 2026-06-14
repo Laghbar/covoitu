@@ -11,6 +11,16 @@ ALTER TABLE profiles
   ADD COLUMN IF NOT EXISTS avatar_url       TEXT,
   ADD COLUMN IF NOT EXISTS created_at       TIMESTAMPTZ NOT NULL DEFAULT now();
 
+-- Payment method on rides (cash or in-app wallet)
+ALTER TABLE rides
+  ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'cash'
+    CHECK (payment_method IN ('cash', 'in_app'));
+
+-- Driver public stats (updated by trigger on ratings insert)
+ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS avg_rating   NUMERIC(3,1),
+  ADD COLUMN IF NOT EXISTS total_trips  INTEGER NOT NULL DEFAULT 0;
+
 -- Keep existing doc columns for backward compat
 ALTER TABLE profiles
   ADD COLUMN IF NOT EXISTS doc_national_id_url  TEXT,
@@ -78,6 +88,26 @@ DROP TRIGGER IF EXISTS on_driver_profile_created ON profiles;
 CREATE TRIGGER on_driver_profile_created
   AFTER INSERT ON profiles
   FOR EACH ROW EXECUTE FUNCTION create_driver_verification();
+
+-- Trigger: recompute driver avg_rating + total_trips after each new rating
+CREATE OR REPLACE FUNCTION update_driver_rating()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_avg NUMERIC(3,1);
+  v_cnt INTEGER;
+BEGIN
+  SELECT ROUND(AVG(score)::NUMERIC, 1), COUNT(*)
+  INTO v_avg, v_cnt
+  FROM ratings WHERE rated_id = NEW.rated_id;
+  UPDATE profiles SET avg_rating = v_avg, total_trips = v_cnt WHERE id = NEW.rated_id;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_rating_inserted ON ratings;
+CREATE TRIGGER on_rating_inserted
+  AFTER INSERT ON ratings
+  FOR EACH ROW EXECUTE FUNCTION update_driver_rating();
 
 -- Trigger: sync documents_verified when verification status changes
 CREATE OR REPLACE FUNCTION sync_verification_status()

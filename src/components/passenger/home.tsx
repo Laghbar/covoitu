@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 
 import { useAuth } from '@/context/auth';
+import { useLang, useLanguage } from '@/context/language';
 import { QRScannerModal } from './qr-scanner';
 
 const C = '#3B82F6';
@@ -37,6 +38,7 @@ const POPULAR_ROUTES = [
 function CityInput({
   value, onSelect, placeholder, dot,
 }: { value: string; onSelect: (c: string) => void; placeholder: string; dot: 'filled' | 'outline' }) {
+  const t = useLang();
   const [focused,   setFocused]   = useState(false);
   const [inputText, setInputText] = useState(value);
   const inputRef = useRef<TextInput>(null);
@@ -60,13 +62,14 @@ function CityInput({
         </View>
 
         <View style={{ flex: 1 }}>
-          <Text style={s.fieldLabel}>{dot === 'filled' ? 'Départ' : 'Destination'}</Text>
+          <Text style={s.fieldLabel}>{dot === 'filled' ? t('Departure', 'Départ') : t('Destination', 'Destination')}</Text>
           <TextInput
             ref={inputRef}
             style={s.fieldInput}
             value={inputText}
-            onChangeText={t => { setInputText(t); onSelect(t); }}
-            placeholder={`Entrez votre ${placeholder.toLowerCase()}`}
+            onChangeText={v => { setInputText(v); onSelect(v); }}
+            placeholder={t(`Enter your ${placeholder.toLowerCase()}`, `Entrez votre ${placeholder.toLowerCase()}`)}
+
             placeholderTextColor="#CBD5E1"
             onFocus={() => setFocused(true)}
             onBlur={() => setTimeout(() => setFocused(false), 150)}
@@ -105,13 +108,16 @@ function CityInput({
 // ─── Date button ──────────────────────────────────────────────────────────────
 
 function DateBtn({ value, onChange }: { value: string; onChange: (iso: string) => void }) {
+  const t = useLang();
+  const { lang } = useLanguage();
   const [show, setShow] = useState(false);
   const today   = new Date().toISOString().split('T')[0];
   const dateObj = value ? new Date(value + 'T12:00:00') : new Date();
   const isToday = value === today;
+  const locale  = lang === 'en' ? 'en-GB' : 'fr-FR';
   const label   = isToday
-    ? "Aujourd'hui"
-    : new Date(value + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+    ? t('Today', "Aujourd'hui")
+    : new Date(value + 'T12:00:00').toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
 
   if (Platform.OS === 'web') {
     return (
@@ -169,7 +175,8 @@ type Props = { onNavigate: (key: string, payload?: any) => void };
 
 export function PassengerHome({ onNavigate }: Props) {
   const { user }  = useAuth();
-  const firstName = user?.name?.split(' ')[0] ?? 'vous';
+  const t = useLang();
+  const firstName = user?.name?.split(' ')[0] ?? t('you', 'vous');
 
   const [from,      setFrom]  = useState('');
   const [to,        setTo]    = useState('');
@@ -224,30 +231,30 @@ export function PassengerHome({ onNavigate }: Props) {
 
         {/* ── Greeting ── */}
         <View style={s.greeting}>
-          <Text style={s.greetSub}>Bonjour, {firstName} !</Text>
-          <Text style={s.greetTitle}>Voyagez ensemble,{'\n'}économisez ensemble</Text>
+          <Text style={s.greetSub}>{t(`Hello, ${firstName}!`, `Bonjour, ${firstName} !`)}</Text>
+          <Text style={s.greetTitle}>{t('Travel together,\nSave together', 'Voyagez ensemble,\néconomisez ensemble')}</Text>
         </View>
 
         {/* ── Search card ── */}
         <View style={s.card}>
 
           {/* Departure */}
-          <CityInput value={from} onSelect={setFrom} placeholder="Départ" dot="filled" />
+          <CityInput value={from} onSelect={setFrom} placeholder={t('departure', 'départ')} dot="filled" />
 
           <View style={s.divider} />
 
           {/* Destination */}
-          <CityInput value={to} onSelect={setTo} placeholder="Destination" dot="outline" />
+          <CityInput value={to} onSelect={setTo} placeholder={t('destination', 'destination')} dot="outline" />
 
           <View style={s.divider} />
 
           {/* Swap + detect */}
           <View style={s.actionsRow}>
-            <Pressable style={s.actionChip} onPress={() => { const t = from; setFrom(to); setTo(t); }}>
-              <Text style={s.actionChipTxt}>⇅ Inverser</Text>
+            <Pressable style={s.actionChip} onPress={() => { const tmp = from; setFrom(to); setTo(tmp); }}>
+              <Text style={s.actionChipTxt}>⇅ {t('Swap', 'Inverser')}</Text>
             </Pressable>
             <Pressable style={s.actionChip} onPress={detectCity} disabled={detecting}>
-              <Text style={s.actionChipTxt}>{detecting ? '⌛ Détection…' : '📍 Ma position'}</Text>
+              <Text style={s.actionChipTxt}>{detecting ? `⌛ ${t('Detecting…', 'Détection…')}` : `📍 ${t('My location', 'Ma position')}`}</Text>
             </Pressable>
           </View>
 
@@ -270,12 +277,12 @@ export function PassengerHome({ onNavigate }: Props) {
             <Pressable style={s.seatsBtn} onPress={() => setSeats(Math.min(8, seats + 1))}>
               <Text style={s.seatsBtnTxt}>+</Text>
             </Pressable>
-            <Text style={s.seatsTxt}>{seats === 1 ? 'passager' : 'passagers'}</Text>
+            <Text style={s.seatsTxt}>{seats === 1 ? t('passenger', 'passager') : t('passengers', 'passagers')}</Text>
           </View>
 
           {/* Search button */}
           <Pressable style={s.searchBtn} onPress={search}>
-            <Text style={s.searchBtnTxt}>Rechercher</Text>
+            <Text style={s.searchBtnTxt}>{t('Search', 'Rechercher')}</Text>
           </Pressable>
         </View>
 
@@ -283,8 +290,8 @@ export function PassengerHome({ onNavigate }: Props) {
         <Pressable style={s.qrBanner} onPress={() => setShowScanner(true)}>
           <View style={s.qrIcon}><Text style={{ fontSize: 22 }}>📷</Text></View>
           <View style={{ flex: 1 }}>
-            <Text style={s.qrTitle}>Trouver un conducteur par QR</Text>
-            <Text style={s.qrSub}>Scannez le QR d'un conducteur pour voir ses trajets</Text>
+            <Text style={s.qrTitle}>{t('Find a driver by QR', 'Trouver un conducteur par QR')}</Text>
+            <Text style={s.qrSub}>{t("Scan a driver's QR to see their trips", "Scannez le QR d'un conducteur pour voir ses trajets")}</Text>
           </View>
           <Text style={[s.qrArrow, { color: C }]}>›</Text>
         </Pressable>

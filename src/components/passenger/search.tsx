@@ -6,7 +6,8 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } fr
 import { RideItem } from '../passenger-dashboard';
 import { useAuth } from '@/context/auth';
 import { supabase } from '@/lib/supabase';
-import { MOROCCAN_CITIES, normalizeCity } from '@/lib/cities';
+import { MOROCCAN_CITIES, normalizeCity, stripDiacritics } from '@/lib/cities';
+import { calcPassengerPrice } from '@/lib/commission';
 
 const C = '#3B82F6';
 
@@ -32,7 +33,10 @@ function toRideItem(r: any): RideItem {
     driver: {
       name: r.driver?.name ?? 'Driver',
       initial: (r.driver?.name?.[0] ?? 'D').toUpperCase(),
-      rating: 4.8, trips: 0, memberSince: '2024', bio: r.note ?? '',
+      rating: r.driver?.avg_rating ?? null,
+      trips: r.driver?.total_trips ?? 0,
+      memberSince: '2024',
+      bio: r.note ?? '',
     },
     car: {
       make:  r.car_make  ?? '',
@@ -45,6 +49,7 @@ function toRideItem(r: any): RideItem {
     pickupPoint: r.pickup_point ?? '',
     dropoffPoint: r.dropoff_point ?? '',
     note: r.note ?? undefined,
+    paymentMethod: (r.payment_method === 'in_app' ? 'in_app' : 'cash') as 'cash' | 'in_app',
   };
 }
 
@@ -172,8 +177,9 @@ function DateField({ value, onChange }: { value: string; onChange: (iso: string)
 function RideCard({ ride, alreadyBooked, onPress }: {
   ride: RideItem; alreadyBooked: boolean; onPress: () => void;
 }) {
-  const available = ride.seats - ride.bookedSeats;
-  const pct = ride.seats > 0 ? ride.bookedSeats / ride.seats : 0;
+  const available     = ride.seats - ride.bookedSeats;
+  const pct           = ride.seats > 0 ? ride.bookedSeats / ride.seats : 0;
+  const passengerPrice = calcPassengerPrice(ride.price, ride.paymentMethod);
 
   return (
     <Pressable style={styles.card} onPress={onPress}>
@@ -183,11 +189,19 @@ function RideCard({ ride, alreadyBooked, onPress }: {
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.driverName}>{ride.driver.name}</Text>
-          <Text style={styles.ratingText}>⭐ {ride.driver.rating} · {ride.driver.trips} trips</Text>
+          {ride.driver.rating != null ? (
+            <Text style={styles.ratingText}>
+              ⭐ {ride.driver.rating.toFixed(1)} · {ride.driver.trips} avis
+            </Text>
+          ) : (
+            <Text style={[styles.ratingText, { color: '#94A3B8', fontStyle: 'italic' }]}>
+              Nouveau conducteur
+            </Text>
+          )}
         </View>
-        <View>
-          <Text style={[styles.price, { color: C }]}>{ride.price} MAD</Text>
-          <Text style={styles.priceSub}>per seat</Text>
+        <View style={{ alignItems: 'flex-end' }}>
+          <Text style={[styles.price, { color: C }]}>{passengerPrice} MAD</Text>
+          <Text style={styles.priceSub}>par siège</Text>
         </View>
       </View>
 
@@ -222,7 +236,20 @@ function RideCard({ ride, alreadyBooked, onPress }: {
       </View>
 
       <View style={styles.prefRow}>
-        {ride.preferences.slice(0, 3).map((p) => (
+        <View style={[
+          styles.payBadge,
+          ride.paymentMethod === 'in_app'
+            ? { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }
+            : { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' },
+        ]}>
+          <Text style={[
+            styles.payBadgeText,
+            { color: ride.paymentMethod === 'in_app' ? '#3B82F6' : '#16A34A' },
+          ]}>
+            {ride.paymentMethod === 'in_app' ? '📱 Paiement app' : '💵 Espèces'}
+          </Text>
+        </View>
+        {ride.preferences.slice(0, 2).map((p) => (
           <View key={p} style={styles.prefChip}><Text style={styles.prefText}>{p}</Text></View>
         ))}
         {alreadyBooked ? (
@@ -311,7 +338,7 @@ export function PassengerSearch({ onNavigate, initialQuery, onScanQR }: Props) {
     const [ridesRes, bookingsRes] = await Promise.all([
       supabase
         .from('rides')
-        .select('id, from_city, to_city, departure_date, departure_time, price, seats, booked_seats, preferences, pickup_point, dropoff_point, note, car_make, car_model, car_year, car_color, car_plate, driver:driver_id(name), bookings(seats_requested, status)')
+        .select('id, from_city, to_city, departure_date, departure_time, price, seats, booked_seats, preferences, pickup_point, dropoff_point, note, payment_method, car_make, car_model, car_year, car_color, car_plate, driver:driver_id(name, avg_rating, total_trips), bookings(seats_requested, status)')
         .eq('status', 'active')
         .gte('departure_date', today)
         .order('departure_date', { ascending: true }),
@@ -339,18 +366,66 @@ export function PassengerSearch({ onNavigate, initialQuery, onScanQR }: Props) {
 
   useEffect(() => { loadRides(); }, [loadRides]);
 
+  // Realtime: auto-add new rides the moment a driver publishes them
+  useEffect(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const channel = supabase
+      .channel('rides-live')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'rides',
+        filter: `status=eq.active`,
+      }, async (payload) => {
+        const newRide = payload.new as any;
+        if (!newRide || newRide.departure_date < today) return;
+        // Fetch full row with driver join so we have name + rating
+        const { data } = await supabase
+          .from('rides')
+          .select('id, from_city, to_city, departure_date, departure_time, price, seats, booked_seats, preferences, pickup_point, dropoff_point, note, payment_method, car_make, car_model, car_year, car_color, car_plate, driver:driver_id(name, avg_rating, total_trips), bookings(seats_requested, status)')
+          .eq('id', newRide.id)
+          .single();
+        if (!data) return;
+        const item = toRideItem(data);
+        setAllRides(prev => {
+          if (prev.some(r => r.id === item.id)) return prev;
+          return [item, ...prev];
+        });
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'rides',
+      }, (payload) => {
+        const updated = payload.new as any;
+        // Remove cancelled/completed rides live; re-fetch active ones
+        if (updated.status !== 'active') {
+          setAllRides(prev => prev.filter(r => r.id !== updated.id));
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
   useEffect(() => {
     if (allRides.length > 0 && (initialQuery?.from || initialQuery?.to)) {
       applySearch(initialQuery?.from ?? '', initialQuery?.to ?? '', initialQuery?.date ?? '');
     }
   }, [allRides]);
 
+  const cityMatch = (stored: string, query: string) => {
+    if (!query) return true;
+    const sd = stripDiacritics(stored.toLowerCase());
+    const qd = stripDiacritics(query.toLowerCase());
+    return sd.includes(qd) || qd.includes(sd);
+  };
+
   const applySearch = (f = from, t = to, d = date) => {
     const nf = normalizeCity(f);
     const nt = normalizeCity(t);
     const filtered = allRides.filter((r) => {
-      const matchFrom = !nf || r.from.toLowerCase().includes(nf.toLowerCase()) || nf.toLowerCase().includes(r.from.toLowerCase());
-      const matchTo   = !nt || r.to.toLowerCase().includes(nt.toLowerCase())   || nt.toLowerCase().includes(r.to.toLowerCase());
+      const matchFrom = !nf || cityMatch(r.from, nf);
+      const matchTo   = !nt || cityMatch(r.to,   nt);
       const matchDate = !d  || r.date === d;
       return matchFrom && matchTo && matchDate;
     });
@@ -366,7 +441,7 @@ export function PassengerSearch({ onNavigate, initialQuery, onScanQR }: Props) {
     const [ridesRes, bookingsRes] = await Promise.all([
       supabase
         .from('rides')
-        .select('id, from_city, to_city, departure_date, departure_time, price, seats, booked_seats, preferences, pickup_point, dropoff_point, note, car_make, car_model, car_year, car_color, car_plate, driver:driver_id(name), bookings(seats_requested, status)')
+        .select('id, from_city, to_city, departure_date, departure_time, price, seats, booked_seats, preferences, pickup_point, dropoff_point, note, payment_method, car_make, car_model, car_year, car_color, car_plate, driver:driver_id(name, avg_rating, total_trips), bookings(seats_requested, status)')
         .eq('status', 'active')
         .gte('departure_date', today)
         .order('departure_date', { ascending: true }),
@@ -384,8 +459,8 @@ export function PassengerSearch({ onNavigate, initialQuery, onScanQR }: Props) {
     const nFrom = normalizeCity(from);
     const nTo   = normalizeCity(to);
     const filtered = mapped.filter((r) => {
-      const matchFrom = !nFrom || r.from.toLowerCase().includes(nFrom.toLowerCase()) || nFrom.toLowerCase().includes(r.from.toLowerCase());
-      const matchTo   = !nTo   || r.to.toLowerCase().includes(nTo.toLowerCase())     || nTo.toLowerCase().includes(r.to.toLowerCase());
+      const matchFrom = !nFrom || cityMatch(r.from, nFrom);
+      const matchTo   = !nTo   || cityMatch(r.to,   nTo);
       const matchDate = !date  || r.date === date;
       return matchFrom && matchTo && matchDate;
     });
@@ -461,12 +536,15 @@ export function PassengerSearch({ onNavigate, initialQuery, onScanQR }: Props) {
       )}
 
       <View style={styles.resultsHeader}>
-        <Text style={styles.resultsCount}>
-          {sorted.length} ride{sorted.length !== 1 ? 's' : ''} found
-          {allRides.length > 0 && sorted.length < allRides.length
-            ? ` (${allRides.length} total loaded)`
-            : ''}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+          <Text style={styles.resultsCount}>
+            {sorted.length} trajet{sorted.length !== 1 ? 's' : ''} trouvé{sorted.length !== 1 ? 's' : ''}
+          </Text>
+          <View style={styles.livePill}>
+            <View style={styles.liveDot} />
+            <Text style={styles.liveTxt}>En direct</Text>
+          </View>
+        </View>
         <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
           {onScanQR && (
             <Pressable onPress={onScanQR} style={[styles.refreshBtn, { backgroundColor: C + '15' }]}>
@@ -493,9 +571,25 @@ export function PassengerSearch({ onNavigate, initialQuery, onScanQR }: Props) {
         </View>
       ) : sorted.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={{ fontSize: 48 }}>🔍</Text>
-          <Text style={styles.emptyTitle}>No rides found</Text>
-          <Text style={styles.emptySub}>Try different cities or dates.</Text>
+          <Text style={{ fontSize: 52 }}>😕</Text>
+          <Text style={styles.emptyTitle}>Aucun trajet trouvé</Text>
+          <Text style={styles.emptySub}>
+            Aucun conducteur ne fait ce trajet pour le moment.
+          </Text>
+
+          {/* Suggest posting a request */}
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyCardTitle}>Vous avez besoin de ce trajet ?</Text>
+            <Text style={styles.emptyCardBody}>
+              Publiez une demande et les conducteurs disponibles vous contacteront directement.
+            </Text>
+            <Pressable
+              style={styles.emptyCardBtn}
+              onPress={() => onNavigate('requests')}
+            >
+              <Text style={styles.emptyCardBtnTxt}>📋 Publier une demande</Text>
+            </Pressable>
+          </View>
         </View>
       ) : (
         sorted.map((r) => (
@@ -584,7 +678,14 @@ const styles = StyleSheet.create({
   retryTxt: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
   resultsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  resultsCount: { fontSize: 15, fontWeight: '700', color: '#1E293B', flex: 1 },
+  resultsCount: { fontSize: 15, fontWeight: '700', color: '#1E293B' },
+  livePill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#DCFCE7', borderRadius: 10,
+    paddingHorizontal: 7, paddingVertical: 3,
+  },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#16A34A' },
+  liveTxt: { fontSize: 10, fontWeight: '700', color: '#16A34A' },
   refreshBtn: { padding: 6 },
   refreshTxt: { fontSize: 18 },
 
@@ -619,12 +720,28 @@ const styles = StyleSheet.create({
   seatBarFill: { height: '100%', borderRadius: 2 },
 
   prefRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
+  payBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1 },
+  payBadgeText: { fontSize: 11, fontWeight: '700' },
   prefChip: { paddingHorizontal: 10, paddingVertical: 4, backgroundColor: '#F1F5F9', borderRadius: 12 },
   prefText: { fontSize: 11, color: '#64748B', fontWeight: '500' },
   bookBtn: { marginLeft: 'auto', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 10 },
   bookBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 
-  empty: { alignItems: 'center', paddingVertical: 56, gap: 10 },
-  emptyTitle: { fontSize: 16, fontWeight: '600', color: '#94A3B8' },
-  emptySub: { fontSize: 13, color: '#CBD5E1' },
+  empty: { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 24, gap: 10 },
+  emptyTitle: { fontSize: 18, fontWeight: '800', color: '#1E293B' },
+  emptySub:   { fontSize: 14, color: '#94A3B8', textAlign: 'center', lineHeight: 20 },
+
+  emptyCard: {
+    marginTop: 8, width: '100%',
+    backgroundColor: '#EFF6FF', borderRadius: 18,
+    borderWidth: 1, borderColor: '#BFDBFE',
+    padding: 20, gap: 10, alignItems: 'center',
+  },
+  emptyCardTitle: { fontSize: 15, fontWeight: '800', color: '#1E293B', textAlign: 'center' },
+  emptyCardBody:  { fontSize: 13, color: '#475569', textAlign: 'center', lineHeight: 20 },
+  emptyCardBtn: {
+    marginTop: 4, backgroundColor: '#3B82F6',
+    borderRadius: 14, paddingVertical: 12, paddingHorizontal: 24,
+  },
+  emptyCardBtnTxt: { color: '#fff', fontSize: 14, fontWeight: '800' },
 });

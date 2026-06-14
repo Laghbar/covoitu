@@ -5,20 +5,21 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '@/context/auth';
+import { useLang } from '@/context/language';
 import { supabase } from '@/lib/supabase';
 import { MOROCCAN_CITIES, normalizeCity } from '@/lib/cities';
-import { calcCommission } from '@/lib/commission';
+import { calcDriverCommission, calcPassengerPrice, calcDriverNet, PASSENGER_FEE_INAPP } from '@/lib/commission';
 import { DocumentsModal } from './documents';
 
 const C = '#10B981';
 
-const PREFS = [
-  { key: 'luggage',  label: 'Luggage',    icon: { ios: 'bag.fill',       android: 'luggage' } },
-  { key: 'pets',     label: 'Pets OK',    icon: { ios: 'pawprint.fill',  android: 'pets' } },
-  { key: 'nosmoke',  label: 'No Smoke',   icon: { ios: 'nosign',         android: 'smoke_free' } },
-  { key: 'music',    label: 'Music',      icon: { ios: 'music.note',     android: 'music_note' } },
-  { key: 'ac',       label: 'A/C',        icon: { ios: 'snowflake',      android: 'ac_unit' } },
-  { key: 'chat',     label: 'Chatty',     icon: { ios: 'bubble.left.fill', android: 'chat' } },
+const PREF_ICONS = [
+  { key: 'luggage', icon: { ios: 'bag.fill',         android: 'luggage'     } },
+  { key: 'pets',    icon: { ios: 'pawprint.fill',    android: 'pets'        } },
+  { key: 'nosmoke', icon: { ios: 'nosign',           android: 'smoke_free'  } },
+  { key: 'music',   icon: { ios: 'music.note',       android: 'music_note'  } },
+  { key: 'ac',      icon: { ios: 'snowflake',        android: 'ac_unit'     } },
+  { key: 'chat',    icon: { ios: 'bubble.left.fill', android: 'chat'        } },
 ];
 
 function CityPicker({ label, value, onSelect, icon }: {
@@ -146,7 +147,17 @@ type Props = { onNavigate: (key: string) => void; onWalletUpdated?: () => void }
 
 export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
   const { user, refreshUser } = useAuth();
+  const t = useLang();
   const isVerified = user?.verification_status === 'verified';
+
+  const PREFS = [
+    { key: 'luggage',  label: t('Luggage',  'Bagages'),     icon: PREF_ICONS[0].icon },
+    { key: 'pets',     label: t('Pets OK',  'Animaux OK'),  icon: PREF_ICONS[1].icon },
+    { key: 'nosmoke',  label: t('No Smoke', 'Non-fumeur'),  icon: PREF_ICONS[2].icon },
+    { key: 'music',    label: t('Music',    'Musique'),     icon: PREF_ICONS[3].icon },
+    { key: 'ac',       label: t('A/C',      'Climatisation'), icon: PREF_ICONS[4].icon },
+    { key: 'chat',     label: t('Chatty',   'Bavard'),      icon: PREF_ICONS[5].icon },
+  ];
   const [docsOpen, setDocsOpen] = useState(false);
   const [from, setFrom]       = useState('');
   const [to, setTo]           = useState('');
@@ -164,8 +175,9 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
   const [carYear,  setCarYear]  = useState('');
   const [carColor, setCarColor] = useState('');
   const [carPlate, setCarPlate] = useState('');
-  const [prefs, setPrefs]     = useState(['luggage', 'nosmoke']);
-  const [loading, setLoading] = useState(false);
+  const [prefs, setPrefs]         = useState(['luggage', 'nosmoke']);
+  const [payment, setPayment]     = useState<'cash' | 'in_app'>('cash');
+  const [loading, setLoading]     = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [locLoading, setLocLoading] = useState(false);
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
@@ -182,7 +194,10 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
 
   useEffect(() => { fetchWalletBalance(); }, [fetchWalletBalance]);
 
-  const commission = price ? calcCommission(Number(price)) : 0;
+  const priceNum    = Number(price) || 0;
+  const commission  = priceNum ? calcDriverCommission(priceNum) : 0;
+  const passengerPays = priceNum ? calcPassengerPrice(priceNum, payment) : 0;
+  const driverNets    = priceNum ? calcDriverNet(priceNum, payment) : 0;
 
   const applyCity = (raw: string) => {
     setFrom(normalizeCity(raw));
@@ -194,7 +209,7 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
 
     if (Platform.OS === 'web') {
       if (!('geolocation' in navigator)) {
-        setSubmitError('Geolocation not supported by this browser.');
+        setSubmitError(t('Geolocation not supported by this browser.', 'Géolocalisation non supportée par ce navigateur.'));
         setLocLoading(false);
         return;
       }
@@ -208,14 +223,14 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
             const data = await res.json();
             const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county;
             if (city) applyCity(city);
-            else setSubmitError('City not detected. Please select manually.');
+            else setSubmitError(t('City not detected. Please select manually.', 'Ville non détectée. Veuillez sélectionner manuellement.'));
           } catch {
-            setSubmitError('Could not fetch city. Please select manually.');
+            setSubmitError(t('Could not fetch city. Please select manually.', 'Impossible de récupérer la ville. Veuillez sélectionner manuellement.'));
           }
           setLocLoading(false);
         },
         () => {
-          setSubmitError('Location denied. Allow location access in your browser and try again.');
+          setSubmitError(t('Location denied. Allow location access in your browser and try again.', 'Localisation refusée. Autorisez l\'accès à la localisation dans votre navigateur et réessayez.'));
           setLocLoading(false);
         },
         { timeout: 10000 },
@@ -226,7 +241,7 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
     // Native (iOS / Android)
     Location.requestForegroundPermissionsAsync().then(async ({ status }) => {
       if (status !== 'granted') {
-        setSubmitError('Location permission denied.');
+        setSubmitError(t('Location permission denied.', 'Permission de localisation refusée.'));
         setLocLoading(false);
         return;
       }
@@ -235,9 +250,9 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
         const [geo] = await Location.reverseGeocodeAsync(pos.coords);
         const raw   = geo?.city || geo?.subregion || geo?.region || '';
         if (raw) applyCity(raw);
-        else setSubmitError('Could not detect city. Select manually.');
+        else setSubmitError(t('Could not detect city. Select manually.', 'Ville non détectée. Sélectionnez manuellement.'));
       } catch {
-        setSubmitError('Location unavailable. Select manually.');
+        setSubmitError(t('Location unavailable. Select manually.', 'Localisation indisponible. Sélectionnez manuellement.'));
       }
       setLocLoading(false);
     });
@@ -246,7 +261,7 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
   const [timePicked, setTimePicked] = useState(false);
 
   const dateStr = datePicked
-    ? dateObj.toLocaleDateString('fr-MA', { day: '2-digit', month: 'short', year: 'numeric' })
+    ? dateObj.toLocaleDateString(t('en-GB', 'fr-MA') as any, { day: '2-digit', month: 'short', year: 'numeric' })
     : '';
   const timeStr = timePicked
     ? timeObj.toLocaleTimeString('fr-MA', { hour: '2-digit', minute: '2-digit', hour12: false })
@@ -263,7 +278,7 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
     setSeats((s) => String(Math.min(8, Math.max(1, Number(s) + d))));
 
   const doPublish = async () => {
-    if (!user) { setSubmitError('Not logged in.'); return; }
+    if (!user) { setSubmitError(t('Not logged in.', 'Non connecté.')); return; }
     setLoading(true);
     setSubmitError(null);
     const { error } = await supabase.from('rides').insert({
@@ -278,6 +293,7 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
       dropoff_point:   dropoff || null,
       preferences:     prefs,
       note:            note || null,
+      payment_method:  payment,
       status:          'active',
       car_make:        carMake  || null,
       car_model:       carModel || null,
@@ -292,11 +308,15 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
       const msg = error.message ?? '';
       if (msg.includes('insufficient_balance')) {
         const needed = msg.match(/([\d.]+) MAD/)?.[1] ?? commission;
-        setSubmitError(
+        setSubmitError(t(
           `Insufficient wallet balance. You need ${needed} MAD commission reserved. Please recharge your wallet.`,
-        );
+          `Solde insuffisant. Vous avez besoin de ${needed} MAD de commission. Veuillez recharger votre portefeuille.`,
+        ));
       } else if (msg.includes('wallet_not_found')) {
-        setSubmitError('Wallet not found. Please visit the Wallet tab to set up your account.');
+        setSubmitError(t(
+          'Wallet not found. Please visit the Wallet tab to set up your account.',
+          "Portefeuille introuvable. Veuillez accéder à l'onglet Portefeuille pour configurer votre compte.",
+        ));
       } else {
         setSubmitError(msg);
       }
@@ -310,30 +330,34 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
   const submit = () => {
     setSubmitError(null);
     if (!from || !to || !datePicked || !timePicked || !price) {
-      setSubmitError('Please fill in route, date, time and price.');
+      setSubmitError(t('Please fill in route, date, time and price.', 'Veuillez remplir l\'itinéraire, la date, l\'heure et le prix.'));
       return;
     }
-    if (!user) { setSubmitError('Not logged in.'); return; }
+    if (!user) { setSubmitError(t('Not logged in.', 'Non connecté.')); return; }
 
     // Wallet balance check (client-side pre-check for fast UX; DB trigger is the real guard)
     if (walletBalance !== null && walletBalance < commission) {
-      setSubmitError(
+      setSubmitError(t(
         `Insufficient wallet balance. You need ${commission} MAD for the platform commission but your wallet has ${walletBalance.toFixed(0)} MAD. Please recharge your wallet.`,
-      );
+        `Solde insuffisant. Vous avez besoin de ${commission} MAD de commission mais votre portefeuille n'a que ${walletBalance.toFixed(0)} MAD. Veuillez recharger votre portefeuille.`,
+      ));
       return;
     }
 
-    const confirmMsg = `Publishing this trip will reserve ${commission} MAD from your wallet as platform commission.\n\nAvailable: ${(walletBalance ?? 0).toFixed(0)} MAD\nCommission: ${commission} MAD\nRemaining: ${((walletBalance ?? 0) - commission).toFixed(0)} MAD`;
+    const confirmMsg = t(
+      `Publishing this trip will reserve ${commission} MAD from your wallet as platform commission.\n\nAvailable: ${(walletBalance ?? 0).toFixed(0)} MAD\nCommission: ${commission} MAD\nRemaining: ${((walletBalance ?? 0) - commission).toFixed(0)} MAD`,
+      `La publication réservera ${commission} MAD depuis votre portefeuille.\n\nSolde : ${(walletBalance ?? 0).toFixed(0)} MAD\nCommission : ${commission} MAD\nReste : ${((walletBalance ?? 0) - commission).toFixed(0)} MAD`,
+    );
 
     if (Platform.OS === 'web') {
       if (window.confirm(confirmMsg)) doPublish();
     } else {
       Alert.alert(
-        'Confirm & Reserve Commission',
+        t('Confirm & Reserve Commission', 'Confirmer & réserver la commission'),
         confirmMsg,
         [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Publish Trip', onPress: doPublish },
+          { text: t('Cancel', 'Annuler'), style: 'cancel' },
+          { text: t('Publish Trip', 'Publier le trajet'), onPress: doPublish },
         ],
       );
     }
@@ -342,22 +366,22 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
 
-      <Text style={styles.pageTitle}>Create a Trip</Text>
-      <Text style={styles.pageSub}>Fill in the details so passengers can find and book your ride.</Text>
+      <Text style={styles.pageTitle}>{t('Create a Trip', 'Créer un trajet')}</Text>
+      <Text style={styles.pageSub}>{t('Fill in the details so passengers can find and book your ride.', 'Remplissez les détails pour que les passagers puissent vous trouver.')}</Text>
 
       {/* Step 1 – Route */}
       <View style={styles.card}>
-        <StepHeader num={1} title="Route" />
+        <StepHeader num={1} title={t('Route', 'Itinéraire')} />
 
         <CityPicker
-          label="Departure city *"
+          label={t('Departure city *', 'Ville de départ *')}
           value={from}
           onSelect={setFrom}
           icon={{ ios: 'location.fill', android: 'location_on' }}
         />
 
         <Pressable style={styles.locBtn} onPress={detectDeparture} disabled={locLoading}>
-          <Text style={styles.locBtnText}>{locLoading ? 'Detecting…' : '📍  Use my current location'}</Text>
+          <Text style={styles.locBtnText}>{locLoading ? t('Detecting…', 'Détection…') : `📍  ${t('Use my current location', 'Utiliser ma position actuelle')}`}</Text>
         </Pressable>
 
         {/* Swap */}
@@ -365,14 +389,14 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
           <View style={styles.swapLine} />
           <Pressable
             style={[styles.swapBtn, { borderColor: C + '50' }]}
-            onPress={() => { const t = from; setFrom(to); setTo(t); }}>
+            onPress={() => { const tmp = from; setFrom(to); setTo(tmp); }}>
             <SymbolView name={{ ios: 'arrow.up.arrow.down', android: 'swap_vert' } as any} size={14} tintColor={C} />
           </Pressable>
           <View style={styles.swapLine} />
         </View>
 
         <CityPicker
-          label="Destination city *"
+          label={t('Destination city *', 'Ville de destination *')}
           value={to}
           onSelect={setTo}
           icon={{ ios: 'mappin', android: 'place' }}
@@ -381,7 +405,7 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
 
       {/* Step 2 – Date & Time */}
       <View style={styles.card}>
-        <StepHeader num={2} title="Date & Time" />
+        <StepHeader num={2} title={t('Date & Time', 'Date & Heure')} />
         <View style={styles.row}>
           <View style={{ flex: 3 }}>
             {Platform.OS === 'web' ? (
@@ -395,7 +419,7 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
             ) : (
               <PickerField
                 icon={{ ios: 'calendar', android: 'calendar_today' } as any}
-                emoji="📅" label="Pick a date *" value={dateStr}
+                emoji="📅" label={t('Pick a date *', 'Choisir une date *')} value={dateStr}
                 onPress={() => setShowDate(true)}
               />
             )}
@@ -415,7 +439,7 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
             ) : (
               <PickerField
                 icon={{ ios: 'clock.fill', android: 'schedule' } as any}
-                emoji="⏰" label="Pick time *" value={timeStr}
+                emoji="⏰" label={t('Pick time *', "Choisir l'heure *")} value={timeStr}
                 onPress={() => setShowTime(true)}
               />
             )}
@@ -438,7 +462,7 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
         )}
         {Platform.OS === 'ios' && showDate && (
           <Pressable style={[styles.doneBtn, { backgroundColor: C }]} onPress={() => setShowDate(false)}>
-            <Text style={styles.doneBtnText}>Done</Text>
+            <Text style={styles.doneBtnText}>{t('Done', 'Terminé')}</Text>
           </Pressable>
         )}
 
@@ -449,27 +473,27 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
             mode="time"
             display={Platform.OS === 'ios' ? 'spinner' : 'default'}
             is24Hour
-            onChange={(_e, t) => {
+            onChange={(_e, tm) => {
               if (Platform.OS !== 'ios') setShowTime(false);
-              if (t) { setTimeObj(t); setTimePicked(true); }
+              if (tm) { setTimeObj(tm); setTimePicked(true); }
             }}
             themeVariant="light"
           />
         )}
         {Platform.OS === 'ios' && showTime && (
           <Pressable style={[styles.doneBtn, { backgroundColor: C }]} onPress={() => setShowTime(false)}>
-            <Text style={styles.doneBtnText}>Done</Text>
+            <Text style={styles.doneBtnText}>{t('Done', 'Terminé')}</Text>
           </Pressable>
         )}
       </View>
 
       {/* Step 3 – Seats & Price */}
       <View style={styles.card}>
-        <StepHeader num={3} title="Seats & Price" />
+        <StepHeader num={3} title={t('Seats & Price', 'Places & Prix')} />
         <View style={styles.row}>
           {/* Seats stepper */}
           <View style={[styles.stepper, { flex: 1 }]}>
-            <Text style={styles.stepperLabel}>Available seats</Text>
+            <Text style={styles.stepperLabel}>{t('Available seats', 'Places disponibles')}</Text>
             <View style={styles.stepperRow}>
               <Pressable style={[styles.stepperBtn, { borderColor: C }]} onPress={() => changeSeats(-1)}>
                 <Text style={[styles.stepperBtnText, { color: C }]}>−</Text>
@@ -489,66 +513,90 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
               value={price}
               onChangeText={setPrice}
               keyboardType="decimal-pad"
-              placeholder="Price *"
+              placeholder={t('Price *', 'Prix *')}
               placeholderTextColor="#94A3B8"
             />
           </View>
         </View>
-        {price ? (
+        {priceNum > 0 ? (
           <View style={[styles.estimateBanner, { backgroundColor: C + '10' }]}>
             <SymbolView name={{ ios: 'info.circle.fill', android: 'info' } as any} size={14} tintColor={C} />
             <Text style={[styles.estimateText, { color: C }]}>
-              Estimated revenue: {Number(price) * Number(seats)} MAD if fully booked
+              {t(`Net revenue if full: ${driverNets * Number(seats)} MAD`, `Revenu net si complet : ${driverNets * Number(seats)} MAD`)}
             </Text>
           </View>
         ) : null}
       </View>
 
-      {/* Step 4 – Meeting points */}
+      {/* Step 4 – Payment method */}
       <View style={styles.card}>
-        <StepHeader num={4} title="Meeting Points" />
-        <View style={styles.inputBox}>
-          <SymbolView name={{ ios: 'arrow.up.circle.fill', android: 'trip_origin' } as any} size={16} tintColor={C} />
-          <TextInput style={styles.inputText} value={pickup} onChangeText={setPickup} placeholder="Pickup point (street, landmark…)" placeholderTextColor="#94A3B8" />
-        </View>
-        <View style={styles.inputBox}>
-          <SymbolView name={{ ios: 'arrow.down.circle.fill', android: 'place' } as any} size={16} tintColor="#EF4444" />
-          <TextInput style={styles.inputText} value={dropoff} onChangeText={setDropoff} placeholder="Drop-off point (street, landmark…)" placeholderTextColor="#94A3B8" />
+        <StepHeader num={4} title={t('Payment method', 'Mode de paiement')} />
+        <Text style={styles.payHint}>{t('How will the passenger pay you?', 'Comment le passager vous paiera-t-il ?')}</Text>
+        <View style={styles.payRow}>
+          <Pressable
+            style={[styles.payOption, payment === 'cash' && { borderColor: C, backgroundColor: C + '10' }]}
+            onPress={() => setPayment('cash')}>
+            <Text style={styles.payEmoji}>💵</Text>
+            <Text style={[styles.payLabel, payment === 'cash' && { color: C }]}>{t('Cash', 'Espèces')}</Text>
+            <Text style={styles.payDesc}>{t('Passenger pays you directly in cash', 'Le passager vous paye directement en main')}</Text>
+            {payment === 'cash' && <View style={[styles.payCheck, { backgroundColor: C }]}><Text style={{ color: '#fff', fontSize: 10, fontWeight: '900' }}>✓</Text></View>}
+          </Pressable>
+          <Pressable
+            style={[styles.payOption, payment === 'in_app' && { borderColor: C, backgroundColor: C + '10' }]}
+            onPress={() => setPayment('in_app')}>
+            <Text style={styles.payEmoji}>📱</Text>
+            <Text style={[styles.payLabel, payment === 'in_app' && { color: C }]}>{t('Via the app', "Via l'application")}</Text>
+            <Text style={styles.payDesc}>{t('Secure payment via Horizon wallet', 'Paiement sécurisé via le portefeuille Horizon')}</Text>
+            {payment === 'in_app' && <View style={[styles.payCheck, { backgroundColor: C }]}><Text style={{ color: '#fff', fontSize: 10, fontWeight: '900' }}>✓</Text></View>}
+          </Pressable>
         </View>
       </View>
 
-      {/* Step 5 – Vehicle */}
+      {/* Step 5 – Meeting points */}
       <View style={styles.card}>
-        <StepHeader num={5} title="Your Vehicle" />
+        <StepHeader num={5} title={t('Meeting Points', 'Points de rencontre')} />
+        <View style={styles.inputBox}>
+          <SymbolView name={{ ios: 'arrow.up.circle.fill', android: 'trip_origin' } as any} size={16} tintColor={C} />
+          <TextInput style={styles.inputText} value={pickup} onChangeText={setPickup} placeholder={t('Pickup point (street, landmark…)', 'Point de prise en charge (rue, repère…)')} placeholderTextColor="#94A3B8" />
+        </View>
+        <View style={styles.inputBox}>
+          <SymbolView name={{ ios: 'arrow.down.circle.fill', android: 'place' } as any} size={16} tintColor="#EF4444" />
+          <TextInput style={styles.inputText} value={dropoff} onChangeText={setDropoff} placeholder={t('Drop-off point (street, landmark…)', 'Point de dépose (rue, repère…)')} placeholderTextColor="#94A3B8" />
+        </View>
+      </View>
+
+      {/* Step 6 – Vehicle */}
+      <View style={styles.card}>
+        <StepHeader num={6} title={t('Your Vehicle', 'Votre véhicule')} />
         <View style={styles.row}>
           <View style={[styles.inputBox, { flex: 1 }]}>
             <SymbolView name={{ ios: 'car.fill', android: 'directions_car' } as any} size={15} tintColor={carMake ? C : '#94A3B8'} />
-            <TextInput style={styles.inputText} value={carMake} onChangeText={setCarMake} placeholder="Make (e.g. Dacia)" placeholderTextColor="#94A3B8" />
+            <TextInput style={styles.inputText} value={carMake} onChangeText={setCarMake} placeholder={t('Make (e.g. Dacia)', 'Marque (ex. Dacia)')} placeholderTextColor="#94A3B8" />
           </View>
           <View style={[styles.inputBox, { flex: 1 }]}>
             <SymbolView name={{ ios: 'car.side.fill', android: 'commute' } as any} size={15} tintColor={carModel ? C : '#94A3B8'} />
-            <TextInput style={styles.inputText} value={carModel} onChangeText={setCarModel} placeholder="Model (e.g. Logan)" placeholderTextColor="#94A3B8" />
+            <TextInput style={styles.inputText} value={carModel} onChangeText={setCarModel} placeholder={t('Model (e.g. Logan)', 'Modèle (ex. Logan)')} placeholderTextColor="#94A3B8" />
           </View>
         </View>
         <View style={styles.row}>
           <View style={[styles.inputBox, { flex: 1 }]}>
             <SymbolView name={{ ios: 'calendar', android: 'calendar_today' } as any} size={15} tintColor={carYear ? C : '#94A3B8'} />
-            <TextInput style={styles.inputText} value={carYear} onChangeText={setCarYear} placeholder="Year" placeholderTextColor="#94A3B8" keyboardType="numeric" maxLength={4} />
+            <TextInput style={styles.inputText} value={carYear} onChangeText={setCarYear} placeholder={t('Year', 'Année')} placeholderTextColor="#94A3B8" keyboardType="numeric" maxLength={4} />
           </View>
           <View style={[styles.inputBox, { flex: 1 }]}>
             <SymbolView name={{ ios: 'paintpalette.fill', android: 'palette' } as any} size={15} tintColor={carColor ? C : '#94A3B8'} />
-            <TextInput style={styles.inputText} value={carColor} onChangeText={setCarColor} placeholder="Color" placeholderTextColor="#94A3B8" />
+            <TextInput style={styles.inputText} value={carColor} onChangeText={setCarColor} placeholder={t('Color', 'Couleur')} placeholderTextColor="#94A3B8" />
           </View>
         </View>
         <View style={styles.inputBox}>
           <SymbolView name={{ ios: 'number.square.fill', android: 'confirmation_number' } as any} size={15} tintColor={carPlate ? C : '#94A3B8'} />
-          <TextInput style={styles.inputText} value={carPlate} onChangeText={setCarPlate} placeholder="Plate number (e.g. 12345 A 5)" placeholderTextColor="#94A3B8" autoCapitalize="characters" />
+          <TextInput style={styles.inputText} value={carPlate} onChangeText={setCarPlate} placeholder={t('Plate number (e.g. 12345 A 5)', 'Numéro de plaque (ex. 12345 A 5)')} placeholderTextColor="#94A3B8" autoCapitalize="characters" />
         </View>
       </View>
 
-      {/* Step 6 – Preferences */}
+      {/* Step 7 – Preferences */}
       <View style={styles.card}>
-        <StepHeader num={6} title="Preferences" />
+        <StepHeader num={7} title={t('Preferences', 'Préférences')} />
         <View style={styles.prefGrid}>
           {PREFS.map((p) => {
             const on = prefs.includes(p.key);
@@ -565,30 +613,82 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
         </View>
       </View>
 
-      {/* Step 7 – Note */}
+      {/* Step 8 – Note */}
       <View style={styles.card}>
-        <StepHeader num={7} title="Note for passengers (optional)" />
+        <StepHeader num={8} title={t('Note for passengers (optional)', 'Note pour les passagers (optionnel)')} />
         <TextInput
           style={styles.noteInput}
           value={note}
           onChangeText={setNote}
-          placeholder="e.g. Meeting at the main entrance. I drive calmly and I'm punctual."
+          placeholder={t("e.g. Meeting at the main entrance. I drive calmly and I'm punctual.", "Ex. Rendez-vous à l'entrée principale. Je conduis calmement et suis ponctuel.")}
           placeholderTextColor="#94A3B8"
           multiline
           numberOfLines={3}
         />
       </View>
 
-      {/* Commission preview */}
-      {commission > 0 && (
+      {/* Commission / pricing preview */}
+      {priceNum > 0 && (
         <View style={[styles.commissionBox, walletBalance !== null && walletBalance < commission && styles.commissionBoxWarn]}>
-          <View style={styles.commissionRow}>
-            <Text style={styles.commissionLabel}>Platform commission</Text>
-            <Text style={styles.commissionValue}>{commission} MAD</Text>
-          </View>
+
+          {payment === 'cash' ? (
+            <>
+              {/* CASH breakdown */}
+              <Text style={[styles.commissionLabel, { fontWeight: '800', marginBottom: 4, color: '#1E293B' }]}>
+                {t('💵 Summary — Cash payment', '💵 Résumé — Paiement en espèces')}
+              </Text>
+              <View style={styles.commissionRow}>
+                <Text style={styles.commissionLabel}>{t('Base price (your revenue)', 'Prix de base (votre revenu)')}</Text>
+                <Text style={styles.commissionValue}>{priceNum} MAD</Text>
+              </View>
+              <View style={styles.commissionRow}>
+                <Text style={styles.commissionLabel}>{t('Platform commission (10%)', 'Commission plateforme (10%)')}</Text>
+                <Text style={[styles.commissionValue, { color: '#EF4444' }]}>+ {commission} MAD</Text>
+              </View>
+              <View style={[styles.commissionRow, { borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 8, marginTop: 4 }]}>
+                <Text style={[styles.commissionLabel, { fontWeight: '800', color: '#1E293B' }]}>{t('Passenger pays', 'Le passager paie')}</Text>
+                <Text style={[styles.commissionValue, { fontSize: 16, color: C }]}>{passengerPays} MAD</Text>
+              </View>
+              <Text style={[styles.commissionNote, { marginTop: 4 }]}>
+                {t(
+                  `Passenger pays you ${passengerPays} MAD in cash. You transfer ${commission} MAD to the platform from your wallet.`,
+                  `Le passager vous paie ${passengerPays} MAD en espèces. Vous reversez ${commission} MAD à la plateforme depuis votre portefeuille.`,
+                )}
+              </Text>
+            </>
+          ) : (
+            <>
+              {/* IN-APP breakdown */}
+              <Text style={[styles.commissionLabel, { fontWeight: '800', marginBottom: 4, color: '#1E293B' }]}>
+                {t("📱 Summary — Payment via the app", "📱 Résumé — Paiement via l'application")}
+              </Text>
+              <View style={styles.commissionRow}>
+                <Text style={styles.commissionLabel}>{t('Base price', 'Prix de base')}</Text>
+                <Text style={styles.commissionValue}>{priceNum} MAD</Text>
+              </View>
+              <View style={styles.commissionRow}>
+                <Text style={styles.commissionLabel}>{t('Passenger fee (platform)', 'Frais passager (plateforme)')}</Text>
+                <Text style={[styles.commissionValue, { color: '#3B82F6' }]}>+ {PASSENGER_FEE_INAPP} MAD</Text>
+              </View>
+              <View style={[styles.commissionRow, { borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 8, marginTop: 4 }]}>
+                <Text style={[styles.commissionLabel, { fontWeight: '800', color: '#1E293B' }]}>{t('Passenger pays', 'Le passager paie')}</Text>
+                <Text style={[styles.commissionValue, { fontSize: 16, color: '#3B82F6' }]}>{passengerPays} MAD</Text>
+              </View>
+              <View style={styles.commissionRow}>
+                <Text style={styles.commissionLabel}>{t('Your commission (10%)', 'Votre commission (10%)')}</Text>
+                <Text style={[styles.commissionValue, { color: '#EF4444' }]}>− {commission} MAD</Text>
+              </View>
+              <View style={[styles.commissionRow, { borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 8, marginTop: 4 }]}>
+                <Text style={[styles.commissionLabel, { fontWeight: '800', color: '#1E293B' }]}>{t('Your net revenue', 'Votre revenu net')}</Text>
+                <Text style={[styles.commissionValue, { fontSize: 16, color: C }]}>{driverNets} {t('MAD / seat', 'MAD / siège')}</Text>
+              </View>
+            </>
+          )}
+
+          {/* Wallet check */}
           {walletBalance !== null && (
-            <View style={styles.commissionRow}>
-              <Text style={styles.commissionLabel}>Your wallet balance</Text>
+            <View style={[styles.commissionRow, { marginTop: 6 }]}>
+              <Text style={styles.commissionLabel}>{t('Wallet balance', 'Solde portefeuille')}</Text>
               <Text style={[styles.commissionValue, walletBalance < commission && { color: '#EF4444' }]}>
                 {walletBalance.toFixed(0)} MAD
               </Text>
@@ -596,13 +696,8 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
           )}
           {walletBalance !== null && walletBalance < commission && (
             <Pressable style={styles.rechargeLink} onPress={() => onNavigate('wallet')}>
-              <Text style={styles.rechargeLinkTxt}>⚡ Recharge wallet to publish →</Text>
+              <Text style={styles.rechargeLinkTxt}>{t('⚡ Recharge wallet →', '⚡ Recharger le portefeuille →')}</Text>
             </Pressable>
-          )}
-          {walletBalance !== null && walletBalance >= commission && (
-            <Text style={styles.commissionNote}>
-              This amount will be reserved when you publish. Released if you cancel before any passengers.
-            </Text>
           )}
         </View>
       )}
@@ -611,11 +706,11 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
       {submitError && (
         <View style={styles.errorBanner}>
           <Text style={styles.errorText}>{submitError}</Text>
-          {submitError.includes('wallet') && (
+          {submitError.includes('wallet') || submitError.includes('portefeuille') ? (
             <Pressable onPress={() => onNavigate('wallet')} style={styles.rechargeBtn}>
-              <Text style={styles.rechargeBtnTxt}>Go to Wallet →</Text>
+              <Text style={styles.rechargeBtnTxt}>{t('Go to Wallet →', 'Aller au portefeuille →')}</Text>
             </Pressable>
-          )}
+          ) : null}
         </View>
       )}
 
@@ -624,17 +719,17 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
         <View style={styles.verifGate}>
           <Text style={styles.verifGateTitle}>
             {user?.verification_status === 'pending_review'
-              ? '⏳ Verification Pending'
-              : '📋 Verification Required'}
+              ? t('⏳ Verification Pending', '⏳ Vérification en attente')
+              : t('📋 Verification Required', '📋 Vérification requise')}
           </Text>
           <Text style={styles.verifGateBody}>
             {user?.verification_status === 'pending_review'
-              ? 'Your documents are under review. You can publish rides once an admin approves your account.'
-              : 'You must upload your documents and get verified before you can publish a ride.'}
+              ? t('Your documents are under review. You can publish rides once an admin approves your account.', "Vos documents sont en cours de vérification. Vous pourrez publier des trajets une fois qu'un administrateur approuve votre compte.")
+              : t('You must upload your documents and get verified before you can publish a ride.', 'Vous devez télécharger vos documents et être vérifié avant de pouvoir publier un trajet.')}
           </Text>
           {user?.verification_status !== 'pending_review' && (
             <Pressable style={styles.verifGateBtn} onPress={() => setDocsOpen(true)}>
-              <Text style={styles.verifGateBtnTxt}>Upload Documents →</Text>
+              <Text style={styles.verifGateBtnTxt}>{t('Upload Documents →', 'Télécharger les documents →')}</Text>
             </Pressable>
           )}
         </View>
@@ -645,7 +740,7 @@ export function DriverCreateTrip({ onNavigate, onWalletUpdated }: Props) {
           disabled={loading || (walletBalance !== null && commission > 0 && walletBalance < commission)}
         >
           <SymbolView name={{ ios: 'checkmark.circle.fill', android: 'check_circle' } as any} size={20} tintColor="#fff" />
-          <Text style={styles.publishText}>{loading ? 'Publishing…' : 'Publish Trip'}</Text>
+          <Text style={styles.publishText}>{loading ? t('Publishing…', 'Publication…') : t('Publish Trip', 'Publier le trajet')}</Text>
         </Pressable>
       )}
 
@@ -711,6 +806,21 @@ const styles = StyleSheet.create({
 
   estimateBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   estimateText: { fontSize: 13, fontWeight: '500', flex: 1 },
+
+  payHint: { fontSize: 13, color: '#64748B', marginBottom: 10 },
+  payRow: { flexDirection: 'row', gap: 10 },
+  payOption: {
+    flex: 1, borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 14,
+    padding: 14, gap: 6, alignItems: 'center', position: 'relative',
+  },
+  payEmoji: { fontSize: 28 },
+  payLabel: { fontSize: 13, fontWeight: '800', color: '#1E293B', textAlign: 'center' },
+  payDesc:  { fontSize: 11, color: '#94A3B8', textAlign: 'center', lineHeight: 15 },
+  payCheck: {
+    position: 'absolute', top: 8, right: 8,
+    width: 18, height: 18, borderRadius: 9,
+    alignItems: 'center', justifyContent: 'center',
+  },
 
   prefGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   prefChip: {

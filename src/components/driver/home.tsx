@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '@/context/auth';
+import { useLang } from '@/context/language';
 import { supabase } from '@/lib/supabase';
 
 const C = '#10B981';
@@ -10,6 +11,7 @@ type Props = { onNavigate: (key: string) => void };
 
 export function DriverHome({ onNavigate }: Props) {
   const { user } = useAuth();
+  const t = useLang();
   const firstName = user?.name?.split(' ')[0] ?? 'Driver';
 
   const [stats,  setStats]  = useState({ trips: 0, requests: 0, todayEarnings: 0 });
@@ -63,10 +65,10 @@ export function DriverHome({ onNavigate }: Props) {
       <View style={styles.hero}>
         <View style={styles.heroTop}>
           <View>
-            <Text style={styles.heroGreeting}>Bonjour, {firstName} 👋</Text>
+            <Text style={styles.heroGreeting}>{t(`Hello, ${firstName} 👋`, `Bonjour, ${firstName} 👋`)}</Text>
             <View style={styles.onlineRow}>
               <View style={styles.onlineDot} />
-              <Text style={styles.onlineTxt}>Online · Ready for rides</Text>
+              <Text style={styles.onlineTxt}>{t('Online · Ready for rides', 'En ligne · Prêt pour les trajets')}</Text>
             </View>
           </View>
           <View style={styles.ratingBadge}>
@@ -82,29 +84,29 @@ export function DriverHome({ onNavigate }: Props) {
         <View style={[styles.kpiCard, { backgroundColor: '#F0FDF4' }]}>
           <Text style={styles.kpiEmoji}>💰</Text>
           <Text style={[styles.kpiVal, { color: C }]}>{stats.todayEarnings} MAD</Text>
-          <Text style={styles.kpiLbl}>Today</Text>
+          <Text style={styles.kpiLbl}>{t('Today', "Aujourd'hui")}</Text>
         </View>
         <View style={[styles.kpiCard, { backgroundColor: '#EFF6FF' }]}>
           <Text style={styles.kpiEmoji}>🚗</Text>
           <Text style={[styles.kpiVal, { color: '#3B82F6' }]}>{stats.trips}</Text>
-          <Text style={styles.kpiLbl}>Completed</Text>
+          <Text style={styles.kpiLbl}>{t('Completed', 'Terminés')}</Text>
         </View>
         <View style={[styles.kpiCard, { backgroundColor: '#FFFBEB' }]}>
           <Text style={styles.kpiEmoji}>📨</Text>
           <Text style={[styles.kpiVal, { color: '#F59E0B' }]}>{stats.requests}</Text>
-          <Text style={styles.kpiLbl}>Requests</Text>
+          <Text style={styles.kpiLbl}>{t('Requests', 'Demandes')}</Text>
         </View>
       </View>
 
       {/* ── Quick actions ── */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Quick Actions</Text>
+        <Text style={styles.sectionTitle}>{t('Quick Actions', 'Actions rapides')}</Text>
         <View style={styles.actionsGrid}>
           {[
-            { key: 'create',      emoji: '➕', label: 'New Trip',  bg: '#F0FDF4', fg: C },
-            { key: 'rides',       emoji: '🚗', label: 'My Rides',  bg: '#EFF6FF', fg: '#3B82F6' },
-            { key: 'invitations', emoji: '📨', label: 'Requests',  bg: '#FFFBEB', fg: '#F59E0B' },
-            { key: 'profile',     emoji: '👤', label: 'Profile',   bg: '#F5F3FF', fg: '#6366F1' },
+            { key: 'create',      emoji: '➕', label: t('New Trip',  'Nouveau trajet'), bg: '#F0FDF4', fg: C },
+            { key: 'rides',       emoji: '🚗', label: t('My Rides',  'Mes trajets'),    bg: '#EFF6FF', fg: '#3B82F6' },
+            { key: 'invitations', emoji: '📨', label: t('Requests',  'Demandes'),       bg: '#FFFBEB', fg: '#F59E0B' },
+            { key: 'profile',     emoji: '👤', label: t('Profile',   'Profil'),         bg: '#F5F3FF', fg: '#6366F1' },
           ].map(a => (
             <Pressable key={a.key} style={styles.actionCard} onPress={() => onNavigate(a.key)}>
               <View style={[styles.actionIcon, { backgroundColor: a.bg }]}>

@@ -10,16 +10,18 @@ import { AdminUsers }         from './admin/users';
 import { AdminRides }         from './admin/rides';
 import { AdminPayments }      from './admin/payments';
 import { AdminVerifications } from './admin/verifications';
+import { AdminWithdrawals }   from './admin/withdrawals';
 
 const C = '#6366F1';
 
-type TabKey = 'overview' | 'users' | 'verifications' | 'rides' | 'payments';
+type TabKey = 'overview' | 'users' | 'verifications' | 'rides' | 'payments' | 'withdrawals';
 const NAV: { key: TabKey; label: string; icon: string }[] = [
   { key: 'overview',      label: 'Overview',     icon: '📊' },
-  { key: 'users',         label: 'Users',         icon: '👥' },
-  { key: 'verifications', label: 'Verifications', icon: '🛡️' },
-  { key: 'rides',         label: 'Rides',         icon: '🚗' },
-  { key: 'payments',      label: 'Payments',      icon: '💳' },
+  { key: 'users',         label: 'Users',        icon: '👥' },
+  { key: 'verifications', label: 'Verifications',icon: '🛡️' },
+  { key: 'rides',         label: 'Rides',        icon: '🚗' },
+  { key: 'payments',      label: 'Payments',     icon: '💳' },
+  { key: 'withdrawals',   label: 'Retraits',     icon: '🏦' },
 ];
 
 // ─── Login form ───────────────────────────────────────────────────────────────
@@ -203,6 +205,7 @@ function Dashboard({ name, onSignOut }: { name: string; onSignOut: () => void })
           {tab === 'verifications' && <AdminVerifications />}
           {tab === 'rides'         && <AdminRides />}
           {tab === 'payments'      && <AdminPayments />}
+          {tab === 'withdrawals'   && <AdminWithdrawals />}
         </ScrollView>
       </View>
     </View>

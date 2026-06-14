@@ -1,9 +1,10 @@
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { Easing, Keyframe } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
+import { useLang, useLanguage } from '@/context/language';
 import { useTheme } from '@/hooks/use-theme';
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
@@ -26,11 +27,20 @@ type Props = { onContinue: () => void };
 export function WelcomeScreen({ onContinue }: Props) {
   const theme = useTheme();
   const { user } = useAuth();
+  const t = useLang();
+  const { lang, toggle } = useLanguage();
   const initial = (user?.name?.[0] ?? '?').toUpperCase();
 
   return (
     <ThemedView style={styles.root}>
       <SafeAreaView style={styles.safe}>
+        {/* Language toggle */}
+        <View style={styles.langRow}>
+          <Pressable style={styles.langBtn} onPress={toggle}>
+            <Text style={styles.langTxt}>{lang === 'en' ? '🇫🇷 FR' : '🇬🇧 EN'}</Text>
+          </Pressable>
+        </View>
+
         <View style={styles.content}>
 
           {/* Avatar circle */}
@@ -40,12 +50,12 @@ export function WelcomeScreen({ onContinue }: Props) {
 
           {/* Greeting text */}
           <Animated.View entering={slideUp.delay(180).duration(DURATION)} style={styles.textBlock}>
-            <ThemedText type="subtitle" style={styles.line}>Welcome,</ThemedText>
+            <ThemedText type="subtitle" style={styles.line}>{t('Welcome,', 'Bienvenue,')}</ThemedText>
             <ThemedText type="subtitle" style={[styles.line, { color: ACCENT }]}>
               {user?.name}!
             </ThemedText>
             <ThemedText themeColor="textSecondary" style={styles.sub}>
-              Your account is ready. Let's get started.
+              {t("Your account is ready. Let's get started.", "Votre compte est prêt. Commençons !")}
             </ThemedText>
           </Animated.View>
 
@@ -54,7 +64,7 @@ export function WelcomeScreen({ onContinue }: Props) {
             <Pressable
               style={({ pressed }) => [styles.btn, pressed && styles.btnPressed]}
               onPress={onContinue}>
-              <ThemedText style={styles.btnText}>Get started</ThemedText>
+              <ThemedText style={styles.btnText}>{t('Get started', 'Commencer')}</ThemedText>
             </Pressable>
           </Animated.View>
 
@@ -67,6 +77,11 @@ export function WelcomeScreen({ onContinue }: Props) {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   safe: { flex: 1 },
+
+  langRow: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, paddingTop: 8 },
+  langBtn: { backgroundColor: '#F1F5F9', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
+  langTxt: { fontSize: 13, fontWeight: '700', color: '#475569' },
+
   content: {
     flex: 1,
     alignItems: 'center',

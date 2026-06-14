@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 
 import { useAuth } from '@/context/auth';
+import { useLang } from '@/context/language';
 import { supabase } from '@/lib/supabase';
 import { calcMatchScore, scoreColor, scoreLabel, RideData } from '@/lib/matching';
 
@@ -30,8 +31,8 @@ type PassengerRequest = {
   bestRide: MyRide | null;
 };
 
-function formatDate(d: string) {
-  return new Date(d).toLocaleDateString('fr-MA', { weekday: 'short', day: '2-digit', month: 'short' });
+function formatDate(d: string, locale = 'fr-MA') {
+  return new Date(d).toLocaleDateString(locale, { weekday: 'short', day: '2-digit', month: 'short' });
 }
 
 function ScoreBadge({ score }: { score: number }) {
@@ -57,6 +58,7 @@ function ProposeModal({ request, myRides, onClose, onProposed }: {
   onClose: () => void;
   onProposed: () => void;
 }) {
+  const t = useLang();
   const [selectedRide, setSelectedRide] = useState<MyRide | null>(null);
   const [message,      setMessage]      = useState('');
   const [saving,       setSaving]       = useState(false);
@@ -107,7 +109,7 @@ function ProposeModal({ request, myRides, onClose, onProposed }: {
         <View style={pm.handle} />
         <View style={pm.header}>
           <View style={{ flex: 1 }}>
-            <Text style={pm.title}>Propose a Ride</Text>
+            <Text style={pm.title}>{t('Propose a Ride', 'Proposer un trajet')}</Text>
             <Text style={pm.sub}>{request.from_city} → {request.to_city}</Text>
           </View>
           <Pressable style={pm.closeBtn} onPress={onClose}>
@@ -118,12 +120,12 @@ function ProposeModal({ request, myRides, onClose, onProposed }: {
         <ScrollView contentContainerStyle={pm.content} showsVerticalScrollIndicator={false}>
           {/* Passenger request info */}
           <View style={pm.reqBox}>
-            <Text style={pm.reqLabel}>Passenger needs:</Text>
+            <Text style={pm.reqLabel}>{t('Passenger needs:', 'Le passager a besoin de :')}</Text>
             <Text style={pm.reqInfo}>
-              {request.seats_needed} seat{request.seats_needed>1?'s':''} · {formatDate(request.departure_date)} around {request.departure_time.slice(0,5)}
+              {request.seats_needed} {t(request.seats_needed>1?'seats':'seat', request.seats_needed>1?'places':'place')} · {formatDate(request.departure_date, t('en-GB', 'fr-MA'))} {t('around', 'vers')} {request.departure_time.slice(0,5)}
             </Text>
             {request.max_price && (
-              <Text style={pm.reqInfo}>Max price: {request.max_price} MAD/seat</Text>
+              <Text style={pm.reqInfo}>{t('Max price:', 'Prix max :')} {request.max_price} {t('MAD/seat', 'MAD/place')}</Text>
             )}
             {request.message && (
               <Text style={pm.reqMessage}>"{request.message}"</Text>
@@ -131,11 +133,11 @@ function ProposeModal({ request, myRides, onClose, onProposed }: {
           </View>
 
           {/* Select ride */}
-          <Text style={pm.sectionLabel}>Select which of your rides to propose:</Text>
+          <Text style={pm.sectionLabel}>{t('Select which of your rides to propose:', 'Sélectionnez le trajet à proposer :')}</Text>
           {eligibleRides.length === 0 ? (
             <View style={pm.noRidesBox}>
               <Text style={pm.noRidesTxt}>
-                You have no scheduled rides with enough seats for this request. Create a trip first.
+                {t('You have no scheduled rides with enough seats for this request. Create a trip first.', 'Vous n\'avez aucun trajet planifié avec suffisamment de places. Créez d\'abord un trajet.')}
               </Text>
             </View>
           ) : (
@@ -151,9 +153,9 @@ function ProposeModal({ request, myRides, onClose, onProposed }: {
                   <View style={{ flex: 1 }}>
                     <Text style={pm.rideRoute}>{ride.from_city} → {ride.to_city}</Text>
                     <Text style={pm.rideMeta}>
-                      {formatDate(ride.departure_date)} · {ride.departure_time.slice(0,5)} · {ride.price_per_seat} MAD/seat
+                      {formatDate(ride.departure_date, t('en-GB', 'fr-MA'))} · {ride.departure_time.slice(0,5)} · {ride.price_per_seat} {t('MAD/seat', 'MAD/place')}
                     </Text>
-                    <Text style={pm.rideSeats}>{ride.available_seats} seats available</Text>
+                    <Text style={pm.rideSeats}>{ride.available_seats} {t('seats available', 'places disponibles')}</Text>
                   </View>
                   <View>
                     <Text style={[pm.rideScore, { color }]}>{score}%</Text>
@@ -165,10 +167,10 @@ function ProposeModal({ request, myRides, onClose, onProposed }: {
           )}
 
           {/* Message */}
-          <Text style={pm.sectionLabel}>Add a message (optional):</Text>
+          <Text style={pm.sectionLabel}>{t('Add a message (optional):', 'Ajouter un message (optionnel) :')}</Text>
           <TextInput
             style={pm.msgInput}
-            placeholder="e.g. I pass through your area, happy to pick you up!"
+            placeholder={t('e.g. I pass through your area, happy to pick you up!', 'Ex. Je passe près de chez vous, je peux vous prendre en chemin !')}
             placeholderTextColor="#94A3B8"
             multiline
             numberOfLines={3}
@@ -181,7 +183,7 @@ function ProposeModal({ request, myRides, onClose, onProposed }: {
             style={[pm.proposeBtn, (saving || eligibleRides.length === 0 || !selectedRide) && { opacity: 0.4 }]}
             onPress={propose}
             disabled={saving || eligibleRides.length === 0 || !selectedRide}>
-            <Text style={pm.proposeTxt}>{saving ? 'Sending…' : '🚗 Send Proposal'}</Text>
+            <Text style={pm.proposeTxt}>{saving ? t('Sending…', 'Envoi…') : t('🚗 Send Proposal', '🚗 Envoyer la proposition')}</Text>
           </Pressable>
         </ScrollView>
       </View>
@@ -193,6 +195,7 @@ function ProposeModal({ request, myRides, onClose, onProposed }: {
 
 export function DriverPassengerRequests() {
   const { user } = useAuth();
+  const t = useLang();
   const [requests,   setRequests]   = useState<PassengerRequest[]>([]);
   const [myRides,    setMyRides]    = useState<MyRide[]>([]);
   const [loading,    setLoading]    = useState(true);
@@ -304,15 +307,15 @@ export function DriverPassengerRequests() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C} />}
         ListHeaderComponent={
           <View style={s.header}>
-            <Text style={s.title}>Passenger Requests</Text>
+            <Text style={s.title}>{t('Passenger Requests', 'Demandes de passagers')}</Text>
             <Text style={s.subtitle}>
-              {requests.length} open request{requests.length !== 1 ? 's' : ''} matching your routes
+              {requests.length} {t(requests.length !== 1 ? 'open requests matching your routes' : 'open request matching your routes', requests.length !== 1 ? 'demandes ouvertes correspondant à vos trajets' : 'demande ouverte correspondant à vos trajets')}
             </Text>
             {/* Score filter */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <View style={s.filterRow}>
                 {[
-                  { label: 'All', val: 0 },
+                  { label: t('All', 'Tous'), val: 0 },
                   { label: '50%+', val: 50 },
                   { label: '70%+', val: 70 },
                   { label: '85%+', val: 85 },
@@ -331,7 +334,7 @@ export function DriverPassengerRequests() {
         contentContainerStyle={s.list}
         renderItem={({ item }) => {
           const responded = alreadyResponded(item);
-          const name = item.profiles?.name ?? 'Passenger';
+          const name = item.profiles?.name ?? t('Passenger', 'Passager');
           return (
             <View style={[s.card, responded && s.cardResponded]}>
               <View style={s.cardTop}>
@@ -341,9 +344,9 @@ export function DriverPassengerRequests() {
                 <View style={{ flex: 1 }}>
                   <Text style={s.route}>{item.from_city} → {item.to_city}</Text>
                   <Text style={s.meta}>
-                    {formatDate(item.departure_date)} · {item.departure_time.slice(0,5)} · {item.seats_needed} seat{item.seats_needed>1?'s':''}
+                    {formatDate(item.departure_date, t('en-GB', 'fr-MA'))} · {item.departure_time.slice(0,5)} · {item.seats_needed} {t(item.seats_needed>1?'seats':'seat', item.seats_needed>1?'places':'place')}
                   </Text>
-                  {item.max_price && <Text style={s.maxPrice}>Max {item.max_price} MAD/seat</Text>}
+                  {item.max_price && <Text style={s.maxPrice}>{t('Max', 'Max')} {item.max_price} {t('MAD/seat', 'MAD/place')}</Text>}
                   {item.message && <Text style={s.msg} numberOfLines={2}>"{item.message}"</Text>}
                 </View>
                 <ScoreBadge score={item.matchScore} />
@@ -351,20 +354,20 @@ export function DriverPassengerRequests() {
 
               {item.bestRide && (
                 <View style={s.matchRide}>
-                  <Text style={s.matchRideLabel}>Best matching ride:</Text>
+                  <Text style={s.matchRideLabel}>{t('Best matching ride:', 'Meilleur trajet correspondant :')}</Text>
                   <Text style={s.matchRideTxt}>
-                    {item.bestRide.from_city} → {item.bestRide.to_city} · {formatDate(item.bestRide.departure_date)} · {item.bestRide.price_per_seat} MAD
+                    {item.bestRide.from_city} → {item.bestRide.to_city} · {formatDate(item.bestRide.departure_date, t('en-GB', 'fr-MA'))} · {item.bestRide.price_per_seat} MAD
                   </Text>
                 </View>
               )}
 
               {responded ? (
                 <View style={s.proposedBanner}>
-                  <Text style={s.proposedTxt}>✓ You already proposed — waiting for passenger response</Text>
+                  <Text style={s.proposedTxt}>✓ {t('You already proposed — waiting for passenger response', 'Vous avez déjà proposé — en attente de réponse du passager')}</Text>
                 </View>
               ) : (
                 <Pressable style={s.proposeBtn} onPress={() => setProposing(item)}>
-                  <Text style={s.proposeBtnTxt}>🚗 Propose a Ride</Text>
+                  <Text style={s.proposeBtnTxt}>{t('🚗 Propose a Ride', '🚗 Proposer un trajet')}</Text>
                 </Pressable>
               )}
             </View>
@@ -374,12 +377,14 @@ export function DriverPassengerRequests() {
           <View style={s.empty}>
             <Text style={s.emptyEmoji}>🔍</Text>
             <Text style={s.emptyTitle}>
-              {requests.length === 0 ? 'No requests nearby' : 'No requests at this score filter'}
+              {requests.length === 0
+                ? t('No requests nearby', 'Aucune demande à proximité')
+                : t('No requests at this score filter', 'Aucune demande à ce niveau de correspondance')}
             </Text>
             <Text style={s.emptyBody}>
               {requests.length === 0
-                ? 'Create scheduled trips and passengers will find you when they post matching requests.'
-                : 'Try lowering the match score filter to see more requests.'}
+                ? t('Create scheduled trips and passengers will find you when they post matching requests.', 'Créez des trajets planifiés et les passagers vous trouveront lorsqu\'ils publient des demandes correspondantes.')
+                : t('Try lowering the match score filter to see more requests.', 'Essayez de réduire le filtre de correspondance pour voir plus de demandes.')}
             </Text>
           </View>
         }

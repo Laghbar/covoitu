@@ -4,6 +4,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Text,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -17,6 +18,7 @@ import Animated, {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MaxContentWidth, Spacing } from '@/constants/theme';
+import { useLang, useLanguage } from '@/context/language';
 import { useTheme } from '@/hooks/use-theme';
 import { Role } from '@/lib/api';
 import { ThemedText } from './themed-text';
@@ -86,7 +88,7 @@ function Illustration() {
 // ── Role card ────────────────────────────────────────────────────────────────
 
 type CardProps = {
-  item: (typeof ROLES)[number];
+  item: { key: Role; label: string; color: string; icon: any; description: string };
   selected: boolean;
   onPress: () => void;
   flex: boolean;
@@ -155,12 +157,41 @@ export function RoleSelectionScreen({ onContinue }: Props) {
   const { width }  = useWindowDimensions();
   const isDesktop  = width >= 640;
   const [selected, setSelected] = useState<Role | null>(null);
+  const t = useLang();
+  const { lang, toggle } = useLanguage();
 
   const roleColor = selected === 'driver' ? DRIVER_COLOR : PASSENGER_COLOR;
+
+  const roles = [
+    {
+      ...ROLES[0],
+      label: t('Passenger', 'Passager'),
+      description: t(
+        'Find available rides, book seats, travel safely, and save money.',
+        'Trouvez des covoiturages, réservez des places, voyagez en sécurité et économisez.',
+      ),
+    },
+    {
+      ...ROLES[1],
+      label: t('Driver', 'Conducteur'),
+      description: t(
+        'Offer rides, earn money from empty seats, manage trips, and help reduce traffic.',
+        "Proposez des covoiturages, gagnez de l'argent, gérez vos trajets et contribuez à réduire le trafic.",
+      ),
+    },
+  ];
 
   return (
     <ThemedView style={styles.root}>
       <SafeAreaView style={styles.safe}>
+
+        {/* Language toggle — top-right */}
+        <View style={styles.langRow}>
+          <Pressable style={styles.langBtn} onPress={toggle}>
+            <Text style={styles.langTxt}>{lang === 'en' ? '🇫🇷 FR' : '🇬🇧 EN'}</Text>
+          </Pressable>
+        </View>
+
         <ScrollView
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}>
@@ -172,16 +203,16 @@ export function RoleSelectionScreen({ onContinue }: Props) {
             {/* Headline */}
             <View style={styles.headline}>
               <ThemedText type="subtitle" style={styles.headlineTitle}>
-                How will you travel?
+                {t('How will you travel?', 'Comment voulez-vous voyager ?')}
               </ThemedText>
               <ThemedText themeColor="textSecondary" style={styles.headlineSub}>
-                Choose your role to get started
+                {t('Choose your role to get started', 'Choisissez votre rôle pour commencer')}
               </ThemedText>
             </View>
 
             {/* Cards */}
             <View style={[styles.cards, isDesktop && styles.cardsRow]}>
-              {ROLES.map((item) => (
+              {roles.map((item) => (
                 <RoleCard
                   key={item.key}
                   item={item}
@@ -202,7 +233,7 @@ export function RoleSelectionScreen({ onContinue }: Props) {
               onPress={() => selected && onContinue(selected)}
               disabled={!selected}>
               <ThemedText style={[styles.continueBtnText, !selected && styles.continueBtnTextOff]}>
-                Continue
+                {t('Continue', 'Continuer')}
               </ThemedText>
               {selected && (
                 <SymbolView
@@ -225,6 +256,11 @@ export function RoleSelectionScreen({ onContinue }: Props) {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   safe: { flex: 1 },
+
+  langRow: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, paddingTop: 8 },
+  langBtn: { backgroundColor: '#F1F5F9', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
+  langTxt: { fontSize: 13, fontWeight: '700', color: '#475569' },
+
   scroll: {
     flexGrow: 1,
     alignItems: 'center',

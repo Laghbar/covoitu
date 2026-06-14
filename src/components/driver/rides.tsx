@@ -3,7 +3,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '@/context/auth';
+import { useLang } from '@/context/language';
 import { supabase } from '@/lib/supabase';
+import { RideQRModal, type QRRide } from './ride-qr-modal';
 
 const C = '#10B981';
 
@@ -14,13 +16,17 @@ type Ride = {
   departure_date: string; departure_time: string;
   seats: number; price: number; status: Status;
   booked_seats?: number;
+  validation_token: string;
 };
 
-const STATUS_META: Record<Status, { bg: string; color: string; label: string }> = {
-  active:    { bg: '#F0FDF4', color: C,         label: 'Active' },
-  completed: { bg: '#F8FAFC', color: '#64748B', label: 'Completed' },
-  cancelled: { bg: '#FEF2F2', color: '#EF4444', label: 'Cancelled' },
-};
+function useStatusMeta() {
+  const t = useLang();
+  return {
+    active:    { bg: '#F0FDF4', color: C,         label: t('Active',    'Actif')    },
+    completed: { bg: '#F8FAFC', color: '#64748B', label: t('Completed', 'Terminé')  },
+    cancelled: { bg: '#FEF2F2', color: '#EF4444', label: t('Cancelled', 'Annulé')   },
+  } as Record<Status, { bg: string; color: string; label: string }>;
+}
 
 function confirm(message: string, onConfirm: () => void) {
   if (Platform.OS === 'web') {
@@ -34,9 +40,11 @@ function confirm(message: string, onConfirm: () => void) {
 }
 
 function RideCard({
-  ride, onComplete, onCancel, onDelete,
-}: { ride: Ride; onComplete: (id: string) => void; onCancel: (id: string) => void; onDelete: (id: string) => void }) {
-  const meta   = STATUS_META[ride.status];
+  ride, onComplete, onCancel, onDelete, onShowQR,
+}: { ride: Ride; onComplete: (id: string) => void; onCancel: (id: string) => void; onDelete: (id: string) => void; onShowQR: (ride: Ride) => void }) {
+  const t          = useLang();
+  const STATUS_META = useStatusMeta();
+  const meta        = STATUS_META[ride.status];
   const booked = ride.booked_seats ?? 0;
   const pct    = ride.seats > 0 ? booked / ride.seats : 0;
 
@@ -55,23 +63,26 @@ function RideCard({
       <View style={styles.progressTrack}>
         <View style={[styles.progressFill, { width: `${pct * 100}%` as any, backgroundColor: pct >= 1 ? '#F59E0B' : C }]} />
       </View>
-      <Text style={styles.progressLabel}>{booked}/{ride.seats} seats booked</Text>
+      <Text style={styles.progressLabel}>{booked}/{ride.seats} {t('seats booked', 'places réservées')}</Text>
 
       <View style={styles.cardFooter}>
-        <Text style={[styles.revenue, { color: C }]}>{ride.price * booked} MAD earned</Text>
+        <Text style={[styles.revenue, { color: C }]}>{ride.price * booked} MAD {t('earned', 'gagnés')}</Text>
 
         <View style={styles.actions}>
           {ride.status === 'active' && (
             <>
+              <Pressable style={styles.qrBtn} onPress={() => onShowQR(ride)}>
+                <Text style={styles.qrBtnText}>📱 QR</Text>
+              </Pressable>
               <Pressable
                 style={styles.completeBtn}
-                onPress={() => confirm('Mark this trip as completed?', () => onComplete(ride.id))}>
-                <Text style={styles.completeBtnText}>✓ Complete</Text>
+                onPress={() => confirm(t('Mark this trip as completed?', 'Marquer ce trajet comme terminé ?'), () => onComplete(ride.id))}>
+                <Text style={styles.completeBtnText}>✓ {t('Complete', 'Terminer')}</Text>
               </Pressable>
               <Pressable
                 style={styles.cancelBtn}
-                onPress={() => confirm('Cancel this trip? Passengers will be notified.', () => onCancel(ride.id))}>
-                <Text style={styles.cancelBtnText}>Cancel</Text>
+                onPress={() => confirm(t('Cancel this trip? Passengers will be notified.', 'Annuler ce trajet ? Les passagers seront notifiés.'), () => onCancel(ride.id))}>
+                <Text style={styles.cancelBtnText}>{t('Cancel', 'Annuler')}</Text>
               </Pressable>
             </>
           )}
@@ -92,10 +103,12 @@ type Props = { onNavigate: (key: string) => void };
 
 export function DriverRides({ onNavigate }: Props) {
   const { user } = useAuth();
+  const t = useLang();
   const [tab,      setTab]      = useState<Status>('active');
   const [rides,    setRides]    = useState<Ride[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [fetchErr, setFetchErr] = useState<string | null>(null);
+  const [qrRide,   setQrRide]   = useState<QRRide | null>(null);
 
   const fetchRides = useCallback(async () => {
     if (!user) return;
@@ -106,7 +119,7 @@ export function DriverRides({ onNavigate }: Props) {
       .from('rides')
       .select(`
         id, from_city, to_city, departure_date, departure_time,
-        seats, price, status, created_at,
+        seats, price, status, created_at, validation_token,
         bookings(seats_requested, status)
       `)
       .eq('driver_id', user.id)
@@ -178,19 +191,27 @@ export function DriverRides({ onNavigate }: Props) {
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <RideQRModal ride={qrRide} onClose={() => setQrRide(null)} />
 
-      <Text style={styles.pageTitle}>My Rides</Text>
+      <Text style={styles.pageTitle}>{t('My Rides', 'Mes trajets')}</Text>
 
       <View style={styles.tabs}>
-        {(['active', 'completed', 'cancelled'] as Status[]).map((t) => (
-          <Pressable key={t} style={[styles.tabChip, tab === t && { backgroundColor: C }]} onPress={() => setTab(t)}>
-            <Text style={[styles.tabText, tab === t && { color: '#fff' }]}>
-              {t.charAt(0).toUpperCase() + t.slice(1)}
-              {t === 'active' && rides.filter(r => r.status === 'active').length > 0
+        {(['active', 'completed', 'cancelled'] as Status[]).map((s) => {
+          const labels: Record<Status, string> = {
+            active:    t('Active',    'Actifs'),
+            completed: t('Completed', 'Terminés'),
+            cancelled: t('Cancelled', 'Annulés'),
+          };
+          return (
+          <Pressable key={s} style={[styles.tabChip, tab === s && { backgroundColor: C }]} onPress={() => setTab(s)}>
+            <Text style={[styles.tabText, tab === s && { color: '#fff' }]}>
+              {labels[s]}
+              {s === 'active' && rides.filter(r => r.status === 'active').length > 0
                 ? ` (${rides.filter(r => r.status === 'active').length})` : ''}
             </Text>
           </Pressable>
-        ))}
+          );
+        })}
       </View>
 
       {fetchErr && (
@@ -206,16 +227,16 @@ export function DriverRides({ onNavigate }: Props) {
       ) : filtered.length === 0 ? (
         <View style={styles.empty}>
           <SymbolView name={{ ios: 'car.fill', android: 'directions_car' } as any} size={52} tintColor="#CBD5E1" />
-          <Text style={styles.emptyTitle}>No {tab} rides</Text>
+          <Text style={styles.emptyTitle}>{t(`No ${tab} rides`, `Aucun trajet ${tab === 'active' ? 'actif' : tab === 'completed' ? 'terminé' : 'annulé'}`)}</Text>
           {tab === 'active' && (
             <Pressable style={[styles.emptyBtn, { backgroundColor: C }]} onPress={() => onNavigate('create')}>
-              <Text style={styles.emptyBtnText}>Create a Trip</Text>
+              <Text style={styles.emptyBtnText}>{t('Create a Trip', 'Créer un trajet')}</Text>
             </Pressable>
           )}
         </View>
       ) : (
         filtered.map(r => (
-          <RideCard key={r.id} ride={r} onComplete={completeRide} onCancel={cancelRide} onDelete={deleteRide} />
+          <RideCard key={r.id} ride={r} onComplete={completeRide} onCancel={cancelRide} onDelete={deleteRide} onShowQR={setQrRide} />
         ))
       )}
 
@@ -250,6 +271,11 @@ const styles = StyleSheet.create({
   revenue: { fontSize: 15, fontWeight: '700' },
 
   actions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  qrBtn: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
+    backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE',
+  },
+  qrBtnText: { fontSize: 13, fontWeight: '700', color: '#3B82F6' },
   completeBtn: {
     paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20,
     backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: C,

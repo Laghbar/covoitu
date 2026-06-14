@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '@/context/auth';
+import { useLang } from '@/context/language';
 import { supabase } from '@/lib/supabase';
 
 const C = '#3B82F6';
@@ -36,6 +37,7 @@ function MenuRow({ item }: { item: MenuItem }) {
 
 export function PassengerProfile() {
   const { user, logout } = useAuth();
+  const t = useLang();
   const [editing,  setEditing]  = useState(false);
   const [saving,   setSaving]   = useState(false);
   const [name,     setName]     = useState(user?.name ?? '');
@@ -43,7 +45,7 @@ export function PassengerProfile() {
   const [bio,      setBio]      = useState('');
   const [photo,    setPhoto]    = useState<string | null>(null);
   const [stats,    setStats]    = useState({ trips: 0, reviews: 0 });
-  const [memberSince, setMemberSince] = useState('');
+  const [memberSinceDate, setMemberSinceDate] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const initial = ((name || user?.name || 'P')[0]).toUpperCase();
@@ -58,9 +60,7 @@ export function PassengerProfile() {
         if (data?.name)  setName(data.name);
         if (data?.phone) setPhone(data.phone);
         if (data?.bio)   setBio(data.bio);
-        if (data?.created_at) {
-          setMemberSince(new Date(data.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }));
-        }
+        if (data?.created_at) setMemberSinceDate(data.created_at);
       });
 
     Promise.all([
@@ -78,13 +78,17 @@ export function PassengerProfile() {
     });
   }, [user]);
 
+  const memberSince = memberSinceDate
+    ? new Date(memberSinceDate).toLocaleDateString(t('en-US', 'fr-FR'), { month: 'long', year: 'numeric' })
+    : null;
+
   const saveProfile = async () => {
     if (!user) return;
     setSaving(true);
     const { error } = await supabase
       .from('profiles').update({ name, phone, bio }).eq('id', user.id);
     setSaving(false);
-    if (error) { Alert.alert('Save failed', error.message); return; }
+    if (error) { Alert.alert(t('Save failed', 'Échec de la sauvegarde'), error.message); return; }
     setEditing(false);
   };
 
@@ -104,50 +108,50 @@ export function PassengerProfile() {
 
   const changePhoto = () => {
     if (Platform.OS === 'web') { pickWeb(); return; }
-    Alert.alert('Profile Photo', 'Choose an option', [
-      { text: 'Take Photo', onPress: async () => {
+    Alert.alert(t('Profile Photo', 'Photo de profil'), t('Choose an option', 'Choisissez une option'), [
+      { text: t('Take Photo', 'Prendre une photo'), onPress: async () => {
         const p = await ImagePicker.requestCameraPermissionsAsync();
         if (!p.granted) return;
         const r = await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [1,1], quality: 0.8 });
         if (!r.canceled) setPhoto(r.assets[0].uri);
       }},
-      { text: 'Choose from Library', onPress: async () => {
+      { text: t('Choose from Library', 'Choisir depuis la bibliothèque'), onPress: async () => {
         const p = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!p.granted) return;
         const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1,1], quality: 0.8 });
         if (!r.canceled) setPhoto(r.assets[0].uri);
       }},
-      photo ? { text: 'Remove Photo', style: 'destructive' as const, onPress: () => setPhoto(null) } : null,
-      { text: 'Cancel', style: 'cancel' as const },
+      photo ? { text: t('Remove Photo', 'Supprimer la photo'), style: 'destructive' as const, onPress: () => setPhoto(null) } : null,
+      { text: t('Cancel', 'Annuler'), style: 'cancel' as const },
     ].filter(Boolean) as any);
   };
 
   const menu: { title: string; items: MenuItem[] }[] = [
     {
-      title: 'Account',
+      title: t('Account', 'Compte'),
       items: [
         {
-          label: 'Notifications',
+          label: t('Notifications', 'Notifications'),
           icon: { ios: 'bell.fill', android: 'notifications' },
           iconBg: '#F59E0B15', iconColor: '#F59E0B',
-          onPress: () => Alert.alert('Notifications', 'Notification settings coming soon.'),
+          onPress: () => Alert.alert(t('Notifications', 'Notifications'), t('Notification settings coming soon.', 'Paramètres de notification bientôt disponibles.')),
         },
       ],
     },
     {
-      title: 'Support',
+      title: t('Support', 'Support'),
       items: [
         {
-          label: 'Help & Support',
+          label: t('Help & Support', 'Aide & Support'),
           icon: { ios: 'questionmark.circle.fill', android: 'help' },
           iconBg: '#0EA5E915', iconColor: '#0EA5E9',
-          onPress: () => Alert.alert('Help', 'Help center coming soon.'),
+          onPress: () => Alert.alert(t('Help', 'Aide'), t('Help center coming soon.', 'Centre d\'aide bientôt disponible.')),
         },
         {
-          label: 'Privacy & Security',
+          label: t('Privacy & Security', 'Confidentialité & Sécurité'),
           icon: { ios: 'lock.shield.fill', android: 'security' },
           iconBg: '#6366F115', iconColor: '#6366F1',
-          onPress: () => Alert.alert('Privacy', 'Privacy settings coming soon.'),
+          onPress: () => Alert.alert(t('Privacy', 'Confidentialité'), t('Privacy settings coming soon.', 'Paramètres de confidentialité bientôt disponibles.')),
         },
       ],
     },
@@ -155,7 +159,7 @@ export function PassengerProfile() {
       title: '',
       items: [
         {
-          label: 'Log Out',
+          label: t('Log Out', 'Se déconnecter'),
           icon: { ios: 'rectangle.portrait.and.arrow.right', android: 'logout' },
           iconBg: '#FEF2F2', iconColor: '#EF4444',
           danger: true, onPress: logout,
@@ -182,13 +186,13 @@ export function PassengerProfile() {
           </View>
         </Pressable>
 
-        <Text style={styles.avatarName}>{name || user?.name || 'Passenger'}</Text>
+        <Text style={styles.avatarName}>{name || user?.name || t('Passenger', 'Passager')}</Text>
         <Text style={styles.avatarEmail}>{user?.email}</Text>
-        {memberSince ? <Text style={styles.memberSince}>Member since {memberSince}</Text> : null}
+        {memberSince ? <Text style={styles.memberSince}>{t('Member since', 'Membre depuis')} {memberSince}</Text> : null}
 
         <View style={styles.verifiedBadge}>
           <SymbolView name={{ ios: 'checkmark.seal.fill', android: 'verified' } as any} size={13} tintColor="#3B82F6" />
-          <Text style={styles.verifiedText}>Verified Passenger</Text>
+          <Text style={styles.verifiedText}>{t('Verified Passenger', 'Passager vérifié')}</Text>
         </View>
       </View>
 
@@ -196,23 +200,23 @@ export function PassengerProfile() {
       <View style={styles.statsRow}>
         <View style={styles.statItem}>
           <Text style={[styles.statVal, { color: C }]}>{stats.trips}</Text>
-          <Text style={styles.statLabel}>Trips done</Text>
+          <Text style={styles.statLabel}>{t('Trips done', 'Trajets effectués')}</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
           <Text style={[styles.statVal, { color: '#F59E0B' }]}>{stats.reviews}</Text>
-          <Text style={styles.statLabel}>Reviews given</Text>
+          <Text style={styles.statLabel}>{t('Reviews given', 'Avis donnés')}</Text>
         </View>
       </View>
 
       {/* Personal info (editable) */}
       <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>Personal Info</Text>
+          <Text style={styles.cardTitle}>{t('Personal Info', 'Informations personnelles')}</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             {editing && (
               <Pressable style={styles.cancelBtn} onPress={() => setEditing(false)}>
-                <Text style={styles.cancelBtnText}>Cancel</Text>
+                <Text style={styles.cancelBtnText}>{t('Cancel', 'Annuler')}</Text>
               </Pressable>
             )}
             <Pressable
@@ -224,7 +228,7 @@ export function PassengerProfile() {
                 size={13} tintColor={editing ? '#fff' : '#475569'}
               />
               <Text style={[styles.editBtnText, { color: editing ? '#fff' : '#475569' }]}>
-                {saving ? 'Saving…' : editing ? 'Save' : 'Edit'}
+                {saving ? t('Saving…', 'Enregistrement…') : editing ? t('Save', 'Enregistrer') : t('Edit', 'Modifier')}
               </Text>
             </Pressable>
           </View>
@@ -232,7 +236,7 @@ export function PassengerProfile() {
 
         {/* Full name */}
         <View>
-          <Text style={styles.fieldLabel}>Full name</Text>
+          <Text style={styles.fieldLabel}>{t('Full name', 'Nom complet')}</Text>
           <View style={[styles.fieldBox, editing && { borderColor: C + '80' }]}>
             <SymbolView name={{ ios: 'person.fill', android: 'person' } as any} size={15} tintColor={editing ? C : '#94A3B8'} />
             {editing ? (
@@ -245,7 +249,7 @@ export function PassengerProfile() {
 
         {/* Phone */}
         <View>
-          <Text style={styles.fieldLabel}>Phone</Text>
+          <Text style={styles.fieldLabel}>{t('Phone', 'Téléphone')}</Text>
           <View style={[styles.fieldBox, editing && { borderColor: C + '80' }]}>
             <SymbolView name={{ ios: 'phone.fill', android: 'phone' } as any} size={15} tintColor={editing ? C : '#94A3B8'} />
             {editing ? (
@@ -258,7 +262,7 @@ export function PassengerProfile() {
 
         {/* Email (read-only) */}
         <View>
-          <Text style={styles.fieldLabel}>Email</Text>
+          <Text style={styles.fieldLabel}>{t('Email (read-only)', 'E-mail (lecture seule)')}</Text>
           <View style={styles.fieldBox}>
             <SymbolView name={{ ios: 'envelope.fill', android: 'email' } as any} size={15} tintColor="#94A3B8" />
             <Text style={[styles.fieldValue, { color: '#94A3B8' }]}>{user?.email}</Text>
@@ -270,19 +274,19 @@ export function PassengerProfile() {
 
         {/* Bio */}
         <View>
-          <Text style={styles.fieldLabel}>About me</Text>
+          <Text style={styles.fieldLabel}>{t('About me', 'À propos de moi')}</Text>
           {editing ? (
             <TextInput
               style={styles.bioInput}
               value={bio} onChangeText={setBio}
               multiline numberOfLines={3}
-              placeholder="Tell drivers a bit about yourself…"
+              placeholder={t('Tell drivers a bit about yourself…', 'Présentez-vous aux conducteurs…')}
               placeholderTextColor="#94A3B8"
             />
           ) : (
             <View style={styles.bioBox}>
               <Text style={[styles.bioText, !bio && { color: '#CBD5E1', fontStyle: 'italic' }]}>
-                {bio || 'No bio yet. Tap Edit to add one.'}
+                {bio || t('No bio yet. Tap Edit to add one.', 'Pas encore de bio. Appuyez sur Modifier pour en ajouter une.')}
               </Text>
             </View>
           )}
@@ -302,7 +306,7 @@ export function PassengerProfile() {
         </View>
       ))}
 
-      <Text style={styles.version}>Horizon v1.0.0</Text>
+      <Text style={styles.version}>{t('Horizon v1.0.0', 'Horizon v1.0.0')}</Text>
     </ScrollView>
   );
 }

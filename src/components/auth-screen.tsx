@@ -2,11 +2,13 @@ import { SymbolView } from "expo-symbols";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
+  Text,
   TextInput,
   View,
 } from "react-native";
@@ -19,6 +21,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { MaxContentWidth, Spacing } from "@/constants/theme";
 import { useAuth } from "@/context/auth";
+import { useLang, useLanguage } from "@/context/language";
 import { useTheme } from "@/hooks/use-theme";
 import { Role } from "@/lib/api";
 import { ThemedText } from "./themed-text";
@@ -26,20 +29,9 @@ import { ThemedView } from "./themed-view";
 
 type Mode = "login" | "register";
 
-const ROLE_META: Record<
-  Role,
-  { color: string; label: string; heroSub: string }
-> = {
-  passenger: {
-    color: "#3c87f7",
-    label: "Passenger",
-    heroSub: "Find rides and travel smarter",
-  },
-  driver: {
-    color: "#43a047",
-    label: "Driver",
-    heroSub: "Share rides and earn money",
-  },
+const ROLE_COLORS: Record<Role, string> = {
+  passenger: "#3c87f7",
+  driver:    "#43a047",
 };
 
 type Props = {
@@ -50,7 +42,16 @@ type Props = {
 export function AuthScreen({ role, onChangeRole }: Props) {
   const theme = useTheme();
   const { login, register, loginError, clearLoginError } = useAuth();
-  const meta = ROLE_META[role];
+  const t = useLang();
+  const { lang, toggle } = useLanguage();
+
+  const meta = {
+    color:   ROLE_COLORS[role],
+    label:   role === 'passenger' ? t('Passenger', 'Passager') : t('Driver', 'Conducteur'),
+    heroSub: role === 'passenger'
+      ? t('Find rides and travel smarter', 'Trouvez des covoiturages et voyagez malin')
+      : t('Share rides and earn money', "Partagez vos trajets et gagnez de l'argent"),
+  };
 
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
@@ -100,11 +101,11 @@ export function AuthScreen({ role, onChangeRole }: Props) {
   const handleSubmit = async () => {
     setError(null);
     if (mode === "register") {
-      if (!name.trim()) { setError("Please enter your full name."); return; }
-      if (!phone.trim()) { setError("Please enter your phone number."); return; }
+      if (!name.trim()) { setError(t("Please enter your full name.", "Veuillez entrer votre nom complet.")); return; }
+      if (!phone.trim()) { setError(t("Please enter your phone number.", "Veuillez entrer votre numéro de téléphone.")); return; }
     }
-    if (!email.trim()) { setError("Please enter your email address."); return; }
-    if (!password)     { setError("Please enter your password."); return; }
+    if (!email.trim()) { setError(t("Please enter your email address.", "Veuillez entrer votre adresse e-mail.")); return; }
+    if (!password)     { setError(t("Please enter your password.", "Veuillez entrer votre mot de passe.")); return; }
 
     setLoading(true);
     try {
@@ -114,7 +115,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
         await register(name.trim(), email.trim(), phone.trim(), password, role);
       }
     } catch (err: any) {
-      const msg = err instanceof Error ? err.message : "Something went wrong.";
+      const msg = err instanceof Error ? err.message : t("Something went wrong.", "Une erreur s'est produite.");
       if (msg === "CHECK_EMAIL") {
         setEmailSent(true);
       } else {
@@ -137,6 +138,13 @@ export function AuthScreen({ role, onChangeRole }: Props) {
   return (
     <ThemedView style={styles.root}>
       <SafeAreaView style={styles.safe}>
+        {/* Language toggle */}
+        <View style={styles.langRow}>
+          <Pressable style={styles.langBtn} onPress={toggle}>
+            <Text style={styles.langTxt}>{lang === 'en' ? '🇫🇷 FR' : '🇬🇧 EN'}</Text>
+          </Pressable>
+        </View>
+
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={styles.kav}
@@ -148,9 +156,11 @@ export function AuthScreen({ role, onChangeRole }: Props) {
           >
             {/* Hero */}
             <View style={styles.hero}>
-              <View style={[styles.logoMark, { backgroundColor: meta.color }]}>
-                <ThemedText style={styles.logoLetter}>H</ThemedText>
-              </View>
+              <Image
+                source={require('../../assets/images/newIcon.png')}
+                style={styles.logoMark}
+                resizeMode="contain"
+              />
               <ThemedText type="title" style={styles.appName}>
                 Horizon
               </ThemedText>
@@ -187,7 +197,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                 <ThemedText
                   style={[styles.roleBadgeChange, { color: meta.color + "AA" }]}
                 >
-                  · change
+                  {t('· change', '· changer')}
                 </ThemedText>
               </Pressable>
 
@@ -233,7 +243,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                         mode !== m ? { color: theme.textSecondary } : undefined
                       }
                     >
-                      {m === "login" ? "Login" : "Register"}
+                      {m === "login" ? t("Login", "Connexion") : t("Register", "S'inscrire")}
                     </ThemedText>
                   </Pressable>
                 ))}
@@ -243,11 +253,11 @@ export function AuthScreen({ role, onChangeRole }: Props) {
               {emailSent && (
                 <View style={styles.successBox}>
                   <ThemedText style={styles.successText}>
-                    ✅ Account created! Check your email to confirm it, then sign in.
+                    {t('✅ Account created! Check your email to confirm it, then sign in.', '✅ Compte créé ! Vérifiez votre e-mail pour le confirmer, puis connectez-vous.')}
                   </ThemedText>
                   <Pressable onPress={() => switchMode("login")}>
                     <ThemedText style={[styles.footerLink, { color: meta.color, marginTop: 6 }]}>
-                      Go to Sign In →
+                      {t('Go to Sign In →', 'Aller à la connexion →')}
                     </ThemedText>
                   </Pressable>
                 </View>
@@ -259,7 +269,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                   <>
                     <View>
                       <ThemedText type="small" themeColor="textSecondary" style={styles.label}>
-                        Full name
+                        {t("Full name", "Nom complet")}
                       </ThemedText>
                       <TextInput
                         style={inputStyle}
@@ -273,7 +283,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                     </View>
                     <View>
                       <ThemedText type="small" themeColor="textSecondary" style={styles.label}>
-                        Phone number
+                        {t("Phone number", "Numéro de téléphone")}
                       </ThemedText>
                       <TextInput
                         style={inputStyle}
@@ -294,7 +304,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                     themeColor="textSecondary"
                     style={styles.label}
                   >
-                    Email address
+                    {t("Email address", "Adresse e-mail")}
                   </ThemedText>
                   <TextInput
                     style={inputStyle}
@@ -318,7 +328,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                     themeColor="textSecondary"
                     style={styles.label}
                   >
-                    Password
+                    {t("Password", "Mot de passe")}
                   </ThemedText>
                   <TextInput
                     style={inputStyle}
@@ -340,7 +350,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                       type="small"
                       style={[styles.forgotLink, { color: meta.color }]}
                     >
-                      Forgot password?
+                      {t("Forgot password?", "Mot de passe oublié ?")}
                     </ThemedText>
                   </Pressable>
                 )}
@@ -364,7 +374,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                     <ActivityIndicator color="#fff" size="small" />
                   ) : (
                     <ThemedText style={styles.buttonText}>
-                      {mode === "login" ? "Sign in" : "Create account"}
+                      {mode === "login" ? t("Sign in", "Se connecter") : t("Create account", "Créer un compte")}
                     </ThemedText>
                   )}
                 </Pressable>
@@ -374,8 +384,8 @@ export function AuthScreen({ role, onChangeRole }: Props) {
               <View style={styles.footer}>
                 <ThemedText type="small" themeColor="textSecondary">
                   {mode === "login"
-                    ? "Don't have an account?  "
-                    : "Already have an account?  "}
+                    ? t("Don't have an account?  ", "Pas encore de compte ?  ")
+                    : t("Already have an account?  ", "Vous avez déjà un compte ?  ")}
                 </ThemedText>
                 <Pressable
                   onPress={() =>
@@ -386,7 +396,7 @@ export function AuthScreen({ role, onChangeRole }: Props) {
                     type="small"
                     style={[styles.footerLink, { color: meta.color }]}
                   >
-                    {mode === "login" ? "Sign up" : "Sign in"}
+                    {mode === "login" ? t("Sign up", "S'inscrire") : t("Sign in", "Se connecter")}
                   </ThemedText>
                 </Pressable>
               </View>
@@ -402,6 +412,10 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   safe: { flex: 1 },
   kav: { flex: 1 },
+
+  langRow: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, paddingTop: 8 },
+  langBtn: { backgroundColor: '#F1F5F9', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
+  langTxt: { fontSize: 13, fontWeight: '700', color: '#475569' },
   scroll: {
     flexGrow: 1,
     alignItems: "center",
@@ -417,8 +431,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.three,
   },
   logoMark: {
-    width: 72,
-    height: 72,
+    width: 90,
+    height: 90,
     borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
@@ -427,7 +441,7 @@ const styles = StyleSheet.create({
   logoLetter: {
     fontSize: 40,
     fontWeight: "700",
-    color: "#fff",
+    color: "#fff", // unused — kept for safety
     lineHeight: 48,
   },
   appName: { letterSpacing: -1 },

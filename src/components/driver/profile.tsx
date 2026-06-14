@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '@/context/auth';
+import { useLang } from '@/context/language';
 import { supabase } from '@/lib/supabase';
 import { DriverQRModal }   from './qr-modal';
 import { DocumentsModal } from './documents';
@@ -38,6 +39,7 @@ function MenuRow({ item }: { item: MenuItem }) {
 
 export function DriverProfile() {
   const { user, logout } = useAuth();
+  const t = useLang();
   const [editing,    setEditing]    = useState(false);
   const [saving,     setSaving]     = useState(false);
   const [showQR,     setShowQR]     = useState(false);
@@ -49,7 +51,7 @@ export function DriverProfile() {
   const [phone,      setPhone]      = useState('');
   const [bio,        setBio]        = useState('');
   const [photo,      setPhoto]      = useState<string | null>(null);
-  const [memberSince, setMemberSince] = useState('');
+  const [memberSinceDate, setMemberSinceDate] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const initial = ((name || user?.name || 'D')[0]).toUpperCase();
@@ -63,9 +65,7 @@ export function DriverProfile() {
         if (data?.name)  setName(data.name);
         if (data?.phone) setPhone(data.phone);
         if (data?.bio)   setBio(data.bio);
-        if (data?.created_at) {
-          setMemberSince(new Date(data.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }));
-        }
+        if (data?.created_at) setMemberSinceDate(data.created_at);
         const uploaded = [data?.doc_national_id_url, data?.doc_license_url, data?.doc_registration_url]
           .filter(Boolean).length;
         setDocsUploaded(uploaded);
@@ -86,6 +86,10 @@ export function DriverProfile() {
     });
   }, [user]);
 
+  const memberSince = memberSinceDate
+    ? new Date(memberSinceDate).toLocaleDateString(t('en-US', 'fr-FR'), { month: 'long', year: 'numeric' })
+    : null;
+
   const saveProfile = async () => {
     if (!user) return;
     setSaving(true);
@@ -94,7 +98,7 @@ export function DriverProfile() {
       .update({ name, phone, bio })
       .eq('id', user.id);
     setSaving(false);
-    if (error) { Alert.alert('Save failed', error.message); return; }
+    if (error) { Alert.alert(t('Save failed', 'Échec de la sauvegarde'), error.message); return; }
     setEditing(false);
   };
 
@@ -118,7 +122,7 @@ export function DriverProfile() {
   const pickFromLibrary = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Permission required', 'Allow access to your photo library in Settings.');
+      Alert.alert(t('Permission required', 'Permission requise'), t('Allow access to your photo library in Settings.', 'Autorisez l\'accès à votre bibliothèque photo dans les Réglages.'));
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -133,7 +137,7 @@ export function DriverProfile() {
   const pickFromCamera = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Permission required', 'Allow camera access in Settings.');
+      Alert.alert(t('Permission required', 'Permission requise'), t('Allow camera access in Settings.', 'Autorisez l\'accès à la caméra dans les Réglages.'));
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
@@ -150,66 +154,68 @@ export function DriverProfile() {
       return;
     }
     Alert.alert(
-      'Profile Photo',
-      'Choose an option',
+      t('Profile Photo', 'Photo de profil'),
+      t('Choose an option', 'Choisissez une option'),
       [
-        { text: 'Take Photo',          onPress: pickFromCamera },
-        { text: 'Choose from Library', onPress: pickFromLibrary },
-        photo ? { text: 'Remove Photo', style: 'destructive', onPress: () => setPhoto(null) } : null,
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('Take Photo', 'Prendre une photo'), onPress: pickFromCamera },
+        { text: t('Choose from Library', 'Choisir depuis la bibliothèque'), onPress: pickFromLibrary },
+        photo ? { text: t('Remove Photo', 'Supprimer la photo'), style: 'destructive', onPress: () => setPhoto(null) } : null,
+        { text: t('Cancel', 'Annuler'), style: 'cancel' },
       ].filter(Boolean) as any,
     );
   };
 
   const menu: { title: string; items: MenuItem[] }[] = [
     {
-      title: 'Account',
+      title: t('Account', 'Compte'),
       items: [
         {
-          label: 'My QR Code', subtitle: 'Share your driver code with passengers',
+          label: t('My QR Code', 'Mon code QR'),
+          subtitle: t('Share your driver code with passengers', 'Partagez votre code conducteur avec les passagers'),
           icon: { ios: 'qrcode', android: 'qr_code' },
           iconBg: '#8B5CF615', iconColor: '#8B5CF6',
           onPress: () => setShowQR(true),
         },
         {
-          label: 'Verification',
+          label: t('Verification', 'Vérification'),
           subtitle: docsVerified
-            ? '✓ Verified by admin'
+            ? t('✓ Verified by admin', '✓ Vérifié par l\'administrateur')
             : docsUploaded === 3
-            ? '⏳ Pending review'
-            : `${docsUploaded}/3 documents uploaded`,
+            ? t('⏳ Pending review', '⏳ En attente de vérification')
+            : t(`${docsUploaded}/3 documents uploaded`, `${docsUploaded}/3 documents téléchargés`),
           icon: { ios: 'checkmark.shield.fill', android: 'verified' },
           iconBg: docsVerified ? C + '15' : '#FEF3C715', iconColor: docsVerified ? C : '#D97706',
           onPress: () => setShowDocs(true),
         },
         {
-          label: 'Notifications',
+          label: t('Notifications', 'Notifications'),
           icon: { ios: 'bell.fill', android: 'notifications' },
           iconBg: '#F59E0B15', iconColor: '#F59E0B',
-          onPress: () => Alert.alert('Notifications', 'Notification settings coming soon.'),
+          onPress: () => Alert.alert(t('Notifications', 'Notifications'), t('Notification settings coming soon.', 'Paramètres de notification bientôt disponibles.')),
         },
       ],
     },
     {
-      title: 'Preferences',
+      title: t('Preferences', 'Préférences'),
       items: [
         {
-          label: 'Language', subtitle: 'French',
+          label: t('Language', 'Langue'),
+          subtitle: t('English', 'Français'),
           icon: { ios: 'globe', android: 'language' },
           iconBg: '#8B5CF615', iconColor: '#8B5CF6',
-          onPress: () => Alert.alert('Language', 'Language picker coming soon.'),
+          onPress: () => Alert.alert(t('Language', 'Langue'), t('Use the toggle at the top of the screen to switch languages.', 'Utilisez le bouton en haut de l\'écran pour changer de langue.')),
         },
         {
-          label: 'Privacy & Security',
+          label: t('Privacy & Security', 'Confidentialité & Sécurité'),
           icon: { ios: 'lock.shield.fill', android: 'security' },
           iconBg: '#6366F115', iconColor: '#6366F1',
-          onPress: () => Alert.alert('Privacy', 'Privacy settings coming soon.'),
+          onPress: () => Alert.alert(t('Privacy', 'Confidentialité'), t('Privacy settings coming soon.', 'Paramètres de confidentialité bientôt disponibles.')),
         },
         {
-          label: 'Help & Support',
+          label: t('Help & Support', 'Aide & Support'),
           icon: { ios: 'questionmark.circle.fill', android: 'help' },
           iconBg: '#0EA5E915', iconColor: '#0EA5E9',
-          onPress: () => Alert.alert('Help', 'Help center coming soon.'),
+          onPress: () => Alert.alert(t('Help', 'Aide'), t('Help center coming soon.', 'Centre d\'aide bientôt disponible.')),
         },
       ],
     },
@@ -217,7 +223,7 @@ export function DriverProfile() {
       title: '',
       items: [
         {
-          label: 'Log Out',
+          label: t('Log Out', 'Se déconnecter'),
           icon: { ios: 'rectangle.portrait.and.arrow.right', android: 'logout' },
           iconBg: '#FEF2F2', iconColor: '#EF4444',
           danger: true,
@@ -251,9 +257,9 @@ export function DriverProfile() {
             <SymbolView name={{ ios: 'camera.fill', android: 'photo_camera' } as any} size={12} tintColor="#fff" />
           </View>
         </Pressable>
-        <Text style={styles.avatarName}>{name || user?.name || 'Driver'}</Text>
+        <Text style={styles.avatarName}>{name || user?.name || t('Driver', 'Conducteur')}</Text>
         <Text style={styles.avatarEmail}>{user?.email}</Text>
-        {memberSince ? <Text style={styles.memberSince}>Member since {memberSince}</Text> : null}
+        {memberSince ? <Text style={styles.memberSince}>{t('Member since', 'Membre depuis')} {memberSince}</Text> : null}
 
         <View style={[styles.verifiedBadge, { backgroundColor: docsVerified ? '#F0FDF4' : '#FFFBEB' }]}>
           <SymbolView
@@ -261,7 +267,11 @@ export function DriverProfile() {
             size={13} tintColor={docsVerified ? '#16A34A' : '#D97706'}
           />
           <Text style={[styles.verifiedText, { color: docsVerified ? '#16A34A' : '#D97706' }]}>
-            {docsVerified ? 'Verified Driver' : docsUploaded === 3 ? 'Pending Review' : `${docsUploaded}/3 Documents`}
+            {docsVerified
+              ? t('Verified Driver', 'Conducteur vérifié')
+              : docsUploaded === 3
+              ? t('Pending Review', 'En attente de vérification')
+              : `${docsUploaded}/3 ${t('Documents', 'Documents')}`}
           </Text>
         </View>
 
@@ -272,18 +282,20 @@ export function DriverProfile() {
               {profileStats.reviewCount > 0 ? profileStats.avgRating.toFixed(1) : '—'}
             </Text>
             <Text style={styles.statLabel}>
-              ⭐ {profileStats.reviewCount > 0 ? `${profileStats.reviewCount} reviews` : 'No reviews'}
+              ⭐ {profileStats.reviewCount > 0
+                ? `${profileStats.reviewCount} ${t('reviews', 'avis')}`
+                : t('No reviews', 'Aucun avis')}
             </Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
             <Text style={[styles.statVal, { color: C }]}>{profileStats.trips}</Text>
-            <Text style={styles.statLabel}>Trips done</Text>
+            <Text style={styles.statLabel}>{t('Trips done', 'Trajets effectués')}</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
-            <Text style={[styles.statVal, { color: C }]}>Active</Text>
-            <Text style={styles.statLabel}>Status</Text>
+            <Text style={[styles.statVal, { color: C }]}>{t('Active', 'Actif')}</Text>
+            <Text style={styles.statLabel}>{t('Status', 'Statut')}</Text>
           </View>
         </View>
       </View>
@@ -291,11 +303,11 @@ export function DriverProfile() {
       {/* Editable info card */}
       <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>Personal Info</Text>
+          <Text style={styles.cardTitle}>{t('Personal Info', 'Informations personnelles')}</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             {editing && (
               <Pressable style={styles.cancelBtn} onPress={() => setEditing(false)}>
-                <Text style={styles.cancelBtnText}>Cancel</Text>
+                <Text style={styles.cancelBtnText}>{t('Cancel', 'Annuler')}</Text>
               </Pressable>
             )}
             <Pressable
@@ -307,14 +319,14 @@ export function DriverProfile() {
                 size={13} tintColor={editing ? '#fff' : '#475569'}
               />
               <Text style={[styles.editBtnText, { color: editing ? '#fff' : '#475569' }]}>
-                {saving ? 'Saving…' : editing ? 'Save' : 'Edit'}
+                {saving ? t('Saving…', 'Enregistrement…') : editing ? t('Save', 'Enregistrer') : t('Edit', 'Modifier')}
               </Text>
             </Pressable>
           </View>
         </View>
 
         <View>
-          <Text style={styles.fieldLabel}>Full name</Text>
+          <Text style={styles.fieldLabel}>{t('Full name', 'Nom complet')}</Text>
           <View style={[styles.fieldBox, editing && { borderColor: C + '80' }]}>
             <SymbolView name={{ ios: 'person.fill', android: 'person' } as any} size={15} tintColor={editing ? C : '#94A3B8'} />
             {editing ? (
@@ -326,7 +338,7 @@ export function DriverProfile() {
         </View>
 
         <View>
-          <Text style={styles.fieldLabel}>Phone</Text>
+          <Text style={styles.fieldLabel}>{t('Phone', 'Téléphone')}</Text>
           <View style={[styles.fieldBox, editing && { borderColor: C + '80' }]}>
             <SymbolView name={{ ios: 'phone.fill', android: 'phone' } as any} size={15} tintColor={editing ? C : '#94A3B8'} />
             {editing ? (
@@ -338,7 +350,7 @@ export function DriverProfile() {
         </View>
 
         <View>
-          <Text style={styles.fieldLabel}>Email (read-only)</Text>
+          <Text style={styles.fieldLabel}>{t('Email (read-only)', 'E-mail (lecture seule)')}</Text>
           <View style={styles.fieldBox}>
             <SymbolView name={{ ios: 'envelope.fill', android: 'email' } as any} size={15} tintColor="#94A3B8" />
             <Text style={[styles.fieldValue, { color: '#94A3B8' }]}>{user?.email}</Text>
@@ -349,7 +361,7 @@ export function DriverProfile() {
         </View>
 
         <View>
-          <Text style={styles.fieldLabel}>About me</Text>
+          <Text style={styles.fieldLabel}>{t('About me', 'À propos de moi')}</Text>
           {editing ? (
             <TextInput
               style={styles.bioInput}
@@ -362,7 +374,7 @@ export function DriverProfile() {
           ) : (
             <View style={styles.bioBox}>
               <Text style={[styles.bioText, !bio && { color: '#CBD5E1', fontStyle: 'italic' }]}>
-                {bio || 'No bio yet. Tap Edit to add one.'}
+                {bio || t('No bio yet. Tap Edit to add one.', 'Pas encore de bio. Appuyez sur Modifier pour en ajouter une.')}
               </Text>
             </View>
           )}
@@ -382,7 +394,7 @@ export function DriverProfile() {
         </View>
       ))}
 
-      <Text style={styles.version}>Horizon v1.0.0 · Driver Edition</Text>
+      <Text style={styles.version}>{t('Horizon v1.0.0 · Driver Edition', 'Horizon v1.0.0 · Édition Conducteur')}</Text>
     </ScrollView>
     </>
   );

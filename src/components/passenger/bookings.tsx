@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '@/context/auth';
+import { useLang } from '@/context/language';
 import { supabase } from '@/lib/supabase';
 import { RateModal } from './rate-modal';
+import { QRScannerModal } from './qr-scanner-modal';
 
 const C = '#3B82F6';
 
@@ -17,6 +19,7 @@ type Booking = {
   message: string | null;
   ride_completed: boolean;
   passenger_dismissed: boolean;
+  boarded_at: string | null;
   ride: {
     id: string;
     from_city: string; to_city: string;
@@ -32,18 +35,21 @@ type RateTarget = { rideId: string; driverId: string; driverName: string; route:
 
 type Tab = 'pending' | 'confirmed' | 'history';
 
-const STATUS_CFG: Record<BookingStatus, { label: string; emoji: string; bg: string; color: string }> = {
-  pending:   { label: 'En attente', emoji: '⏳', bg: '#FFFBEB', color: '#D97706' },
-  accepted:  { label: 'Confirmé',   emoji: '✅', bg: '#F0FDF4', color: '#10B981' },
-  rejected:  { label: 'Refusé',     emoji: '❌', bg: '#FEF2F2', color: '#EF4444' },
-  cancelled: { label: 'Annulé',     emoji: '🚫', bg: '#F8FAFC', color: '#94A3B8' },
-};
+function useStatusCfg() {
+  const t = useLang();
+  return {
+    pending:   { label: t('Pending',   'En attente'), emoji: '⏳', bg: '#FFFBEB', color: '#D97706' },
+    accepted:  { label: t('Confirmed', 'Confirmé'),   emoji: '✅', bg: '#F0FDF4', color: '#10B981' },
+    rejected:  { label: t('Declined',  'Refusé'),     emoji: '❌', bg: '#FEF2F2', color: '#EF4444' },
+    cancelled: { label: t('Cancelled', 'Annulé'),     emoji: '🚫', bg: '#F8FAFC', color: '#94A3B8' },
+  } as Record<BookingStatus, { label: string; emoji: string; bg: string; color: string }>;
+}
 
-function getStatusDisplay(booking: Booking) {
+function getStatusDisplay(booking: Booking, cfg: ReturnType<typeof useStatusCfg>, t: (en: string, fr: string) => string) {
   if (booking.status === 'accepted' && booking.ride_completed) {
-    return { label: 'Terminé', emoji: '🎉', bg: '#EFF6FF', color: '#3B82F6' };
+    return { label: t('Completed', 'Terminé'), emoji: '🎉', bg: '#EFF6FF', color: '#3B82F6' };
   }
-  return STATUS_CFG[booking.status];
+  return cfg[booking.status];
 }
 
 function NotifBanner({ message, color, onDone }: { message: string; color: string; onDone: () => void }) {
@@ -65,15 +71,18 @@ function NotifBanner({ message, color, onDone }: { message: string; color: strin
 }
 
 function BookingCard({
-  booking, reviewedRideIds, onCancel, onRate, onDismiss,
+  booking, reviewedRideIds, onCancel, onRate, onDismiss, onScanQR,
 }: {
   booking: Booking;
   reviewedRideIds: Set<string>;
   onCancel: (id: string) => void;
-  onRate: (t: RateTarget) => void;
+  onRate: (target: RateTarget) => void;
   onDismiss: (id: string) => void;
+  onScanQR: (bookingId: string) => void;
 }) {
-  const cfg           = getStatusDisplay(booking);
+  const t = useLang();
+  const statusCfg     = useStatusCfg();
+  const cfg           = getStatusDisplay(booking, statusCfg, t);
   const rideCompleted = booking.ride_completed === true;
   const driverName    = booking.ride?.driver?.name ?? 'Driver';
   const initial       = driverName[0]?.toUpperCase() ?? 'D';
@@ -85,13 +94,17 @@ function BookingCard({
 
   const doCancel = () => {
     if (Platform.OS === 'web') {
-      if (window.confirm('Annuler cette réservation ?')) onCancel(booking.id);
+      if (window.confirm(t('Cancel this booking?', 'Annuler cette réservation ?'))) onCancel(booking.id);
     } else {
       const { Alert } = require('react-native');
-      Alert.alert('Annuler la réservation', 'Êtes-vous sûr ?', [
-        { text: 'Non', style: 'cancel' },
-        { text: 'Oui, annuler', style: 'destructive', onPress: () => onCancel(booking.id) },
-      ]);
+      Alert.alert(
+        t('Cancel booking', 'Annuler la réservation'),
+        t('Are you sure?', 'Êtes-vous sûr ?'),
+        [
+          { text: t('No', 'Non'), style: 'cancel' },
+          { text: t('Yes, cancel', 'Oui, annuler'), style: 'destructive', onPress: () => onCancel(booking.id) },
+        ],
+      );
     }
   };
 
@@ -122,28 +135,39 @@ function BookingCard({
 
       {booking.message ? (
         <View style={styles.msgBubble}>
-          <Text style={styles.msgLabel}>Votre message au conducteur :</Text>
+          <Text style={styles.msgLabel}>{t('Your message to the driver:', 'Votre message au conducteur :')}</Text>
           <Text style={styles.msgText}>"{booking.message}"</Text>
         </View>
       ) : null}
 
       {booking.status === 'accepted' && !rideCompleted && (
-        <View style={styles.acceptedBanner}>
-          <Text style={styles.acceptedTxt}>✅ Le conducteur a accepté votre réservation</Text>
-        </View>
+        <>
+          <View style={styles.acceptedBanner}>
+            <Text style={styles.acceptedTxt}>✅ {t('The driver accepted your booking', 'Le conducteur a accepté votre réservation')}</Text>
+          </View>
+          {booking.boarded_at ? (
+            <View style={styles.boardedBanner}>
+              <Text style={styles.boardedTxt}>🚗 {t('On board — enjoy the ride!', 'À bord — bon voyage !')}</Text>
+            </View>
+          ) : (
+            <Pressable style={styles.scanBtn} onPress={() => onScanQR(booking.id)}>
+              <Text style={styles.scanTxt}>📷  {t("Scan the driver's QR code", 'Scanner le QR du conducteur')}</Text>
+            </Pressable>
+          )}
+        </>
       )}
       {rideCompleted && (
         <View style={[styles.acceptedBanner, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-          <Text style={[styles.acceptedTxt, { color: '#3B82F6' }]}>🎉 Trajet terminé — merci d'avoir voyagé !</Text>
+          <Text style={[styles.acceptedTxt, { color: '#3B82F6' }]}>🎉 {t('Trip completed — thanks for riding!', 'Trajet terminé — merci d\'avoir voyagé !')}</Text>
         </View>
       )}
 
       <View style={styles.cardFooter}>
         <View>
-          <Text style={styles.seatsLbl}>{booking.seats_requested} place{booking.seats_requested > 1 ? 's' : ''}</Text>
+          <Text style={styles.seatsLbl}>{booking.seats_requested} {booking.seats_requested > 1 ? t('seats', 'places') : t('seat', 'place')}</Text>
           <Text style={[styles.price, { color: C }]}>{total} MAD</Text>
         </View>
-        {alreadyRated && <Text style={styles.ratedBadge}>⭐ Évalué</Text>}
+        {alreadyRated && <Text style={styles.ratedBadge}>⭐ {t('Rated', 'Évalué')}</Text>}
       </View>
 
       {canRate && (
@@ -156,17 +180,17 @@ function BookingCard({
               driverName,
               route: `${booking.ride?.from_city} → ${booking.ride?.to_city}`,
             })}>
-            <Text style={styles.rateTxt}>⭐ Évaluer le trajet</Text>
+            <Text style={styles.rateTxt}>⭐ {t('Rate this trip', 'Évaluer le trajet')}</Text>
           </Pressable>
           <Pressable style={styles.skipBtn} onPress={() => onDismiss(booking.id)}>
-            <Text style={styles.skipTxt}>Ignorer</Text>
+            <Text style={styles.skipTxt}>{t('Skip', 'Ignorer')}</Text>
           </Pressable>
         </View>
       )}
 
       {canCancel && (
         <Pressable style={styles.cancelBtn} onPress={doCancel}>
-          <Text style={styles.cancelTxt}>🚫  Annuler la réservation</Text>
+          <Text style={styles.cancelTxt}>🚫  {t('Cancel booking', 'Annuler la réservation')}</Text>
         </Pressable>
       )}
     </View>
@@ -178,12 +202,14 @@ type Notif = { message: string; color: string; key: number };
 
 export function PassengerBookings({ onNavigate }: Props) {
   const { user } = useAuth();
+  const t = useLang();
   const [bookings,        setBookings]        = useState<Booking[]>([]);
   const [reviewedRideIds, setReviewedRideIds] = useState<Set<string>>(new Set());
   const [loading,         setLoading]         = useState(true);
   const [tab,             setTab]             = useState<Tab>('pending');
   const [notif,           setNotif]           = useState<Notif | null>(null);
   const [rateTarget,      setRateTarget]      = useState<RateTarget | null>(null);
+  const [scanBookingId,   setScanBookingId]   = useState<string | null>(null);
   const selfCancelledIds  = useRef<Set<string>>(new Set());
 
   // Clear bell badge when passenger opens this tab
@@ -205,7 +231,7 @@ export function PassengerBookings({ onNavigate }: Props) {
       supabase
         .from('bookings')
         .select(`
-          id, seats_requested, status, created_at, message, ride_completed, passenger_dismissed,
+          id, seats_requested, status, created_at, message, ride_completed, passenger_dismissed, boarded_at,
           ride:ride_id(
             id, from_city, to_city, departure_date, departure_time,
             price, status, driver_id,
@@ -304,8 +330,21 @@ export function PassengerBookings({ onNavigate }: Props) {
   );
   const shown = tab === 'pending' ? pendingList : tab === 'confirmed' ? confirmedList : historyList;
 
+  const handleBoarded = () => {
+    if (!scanBookingId) return;
+    setBookings(prev => prev.map(b => b.id === scanBookingId ? { ...b, boarded_at: new Date().toISOString() } : b));
+  };
+
   return (
     <View style={{ flex: 1 }}>
+      {scanBookingId && (
+        <QRScannerModal
+          visible={!!scanBookingId}
+          bookingId={scanBookingId}
+          onClose={() => setScanBookingId(null)}
+          onValidated={handleBoarded}
+        />
+      )}
       {rateTarget && (
         <RateModal
           visible
@@ -324,38 +363,39 @@ export function PassengerBookings({ onNavigate }: Props) {
 
       <ScrollView style={styles.root} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
-        <Text style={styles.pageTitle}>Vos trajets</Text>
+        <Text style={styles.pageTitle}>{t('Your trips', 'Vos trajets')}</Text>
 
         <View style={styles.tabs}>
           <Pressable style={[styles.tabChip, tab === 'pending'   && { backgroundColor: '#D97706' }]} onPress={() => setTab('pending')}>
             <Text style={[styles.tabTxt, tab === 'pending'   && { color: '#fff' }]}>
-              ⏳ En attente{pendingList.length > 0 ? ` (${pendingList.length})` : ''}
+              ⏳ {t('Pending', 'En attente')}{pendingList.length > 0 ? ` (${pendingList.length})` : ''}
             </Text>
           </Pressable>
           <Pressable style={[styles.tabChip, tab === 'confirmed' && { backgroundColor: '#10B981' }]} onPress={() => setTab('confirmed')}>
             <Text style={[styles.tabTxt, tab === 'confirmed' && { color: '#fff' }]}>
-              ✅ Confirmés{confirmedList.length > 0 ? ` (${confirmedList.length})` : ''}
+              ✅ {t('Confirmed', 'Confirmés')}{confirmedList.length > 0 ? ` (${confirmedList.length})` : ''}
             </Text>
           </Pressable>
           <Pressable style={[styles.tabChip, tab === 'history'   && { backgroundColor: '#64748B' }]} onPress={() => setTab('history')}>
-            <Text style={[styles.tabTxt, tab === 'history'   && { color: '#fff' }]}>Historique</Text>
+            <Text style={[styles.tabTxt, tab === 'history'   && { color: '#fff' }]}>{t('History', 'Historique')}</Text>
           </Pressable>
         </View>
 
         {loading ? (
-          <View style={styles.empty}><Text style={styles.emptyTxt}>Chargement…</Text></View>
+          <View style={styles.empty}><Text style={styles.emptyTxt}>{t('Loading…', 'Chargement…')}</Text></View>
         ) : shown.length === 0 ? (
           <View style={styles.empty}>
             <Text style={{ fontSize: 48 }}>
               {tab === 'pending' ? '⏳' : tab === 'confirmed' ? '🎫' : '📋'}
             </Text>
             <Text style={styles.emptyTxt}>
-              {tab === 'pending'   ? 'Aucune demande en attente'  :
-               tab === 'confirmed' ? 'Aucun trajet confirmé'      : 'Aucun historique'}
+              {tab === 'pending'   ? t('No pending bookings',  'Aucune demande en attente') :
+               tab === 'confirmed' ? t('No confirmed trips',   'Aucun trajet confirmé')     :
+                                     t('No history',           'Aucun historique')}
             </Text>
             {tab === 'pending' && (
               <Pressable style={[styles.emptyBtn, { backgroundColor: C }]} onPress={() => onNavigate('search')}>
-                <Text style={styles.emptyBtnTxt}>Trouver un trajet</Text>
+                <Text style={styles.emptyBtnTxt}>{t('Find a trip', 'Trouver un trajet')}</Text>
               </Pressable>
             )}
           </View>
@@ -368,6 +408,7 @@ export function PassengerBookings({ onNavigate }: Props) {
               onCancel={cancelBooking}
               onRate={setRateTarget}
               onDismiss={dismissBooking}
+              onScanQR={setScanBookingId}
             />
           ))
         )}
@@ -442,6 +483,17 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#BBF7D0', alignItems: 'center',
   },
   acceptedTxt: { fontSize: 13, fontWeight: '700', color: '#10B981' },
+  scanBtn: {
+    backgroundColor: '#EFF6FF', borderRadius: 12, padding: 12,
+    borderWidth: 1.5, borderColor: '#93C5FD', alignItems: 'center',
+    borderStyle: 'dashed',
+  },
+  scanTxt: { fontSize: 14, fontWeight: '700', color: '#3B82F6' },
+  boardedBanner: {
+    backgroundColor: '#ECFDF5', borderRadius: 10, padding: 12,
+    borderWidth: 1, borderColor: '#6EE7B7', alignItems: 'center',
+  },
+  boardedTxt: { fontSize: 13, fontWeight: '800', color: '#059669' },
 
   cancelBtn: {
     paddingVertical: 11, borderRadius: 12,
